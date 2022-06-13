@@ -1,3 +1,5 @@
+import time
+
 import argparse
 import os
 import torch
@@ -29,6 +31,7 @@ def logger(info):
 
 
 def main():
+    start_time = time.time()
     ray.init()
     print(f"Is cuda available: {torch.cuda.is_available()}")
     print(ray.cluster_resources())
@@ -57,6 +60,7 @@ def main():
         method_dict[conv_name] = (test_roc, test_roc_std)
     for key, value in method_dict.items():
         print(f"{key} has {value}")
+    print(f"time taken is {(time.time() - start_time)/3600} hours")
 
 
 if __name__ == '__main__':

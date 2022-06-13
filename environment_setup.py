@@ -26,4 +26,5 @@ def get_configurations_dtype_boolean(section, key, default_value=None):
 
 def get_configurations_dtype_string_list(section, key, default_value=None):
     comma_separated_list = parser[section].get(key, fallback=default_value)
-    return comma_separated_list.split(",")
+    list_elements = comma_separated_list.split(",")
+    return [x.strip() for x in list_elements]
