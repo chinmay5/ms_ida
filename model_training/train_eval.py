@@ -78,7 +78,7 @@ def cross_validation_with_val_set(dataset, folds, model_type, epochs, batch_size
             num_samples=num_samples,
             scheduler=scheduler,
             progress_reporter=reporter,
-            # local_dir=get_configurations_dtype_string(section='TRAINING', key='LOG_DIR')
+            local_dir=get_configurations_dtype_string(section='TRAINING', key='LOG_DIR')
         )
 
         best_trial = result.get_best_trial("roc_auc", "max", "last")
@@ -99,13 +99,6 @@ def cross_validation_with_val_set(dataset, folds, model_type, epochs, batch_size
         test_rocs.append(test_roc)
         print("Best trial test set accuracy: {}".format(test_roc))
 
-        # test_roc, max_val_roc_auc = train_and_save_best_model(criterion=criterion, fold=fold, enc=enc, epochs=epochs, logger=logger,
-        #                                      lr_decay_factor=lr_decay_factor, lr_decay_step_size=lr_decay_step_size,
-        #                                      model=model, optimizer=optimizer, test_loader=test_loader,
-        #                                      train_loader=train_loader,
-        #                                      train_writer=train_writer, val_loader=val_loader, val_writer=val_writer)
-        # test_rocs.append(test_roc)
-        # max_val_rocs.append(max_val_roc_auc)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
