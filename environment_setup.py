@@ -46,3 +46,10 @@ def get_configurations_dtype_string_list(section, key, default_value=None):
     list_elements = comma_separated_list.split(",")
     return [x.strip() for x in list_elements]
 
+
+def write_configs_to_disk():
+    base_log_dir = os.path.join(PROJECT_ROOT_DIR,
+                                get_configurations_dtype_string(section='TRAINING', key='LOG_DIR'))
+    filename = os.path.join(base_log_dir, "configs_for_run.cfg")
+    with open(filename, 'w') as configfile:
+        parser.write(configfile)
