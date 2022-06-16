@@ -6,7 +6,7 @@ import torch_geometric
 import torch_geometric.transforms as T
 from torch_geometric.data import Dataset
 
-from environment_setup import get_configurations_dtype_string
+from environment_setup import get_configurations_dtype_string, get_configurations_dtype_boolean
 
 
 class SegregatedHomogeneousPatientDataset(Dataset):
@@ -18,6 +18,7 @@ class SegregatedHomogeneousPatientDataset(Dataset):
             filename = get_configurations_dtype_string(section='SETUP', key='SMALL_GRAPHS_FILENAME')
         self.data_list = pickle.load(open(filename, 'rb'))
         self.y = [graph_info[1] for graph_info in self.data_list]
+        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES', default_value=False)
         self.transform = transform
 
     def __len__(self):
@@ -25,6 +26,8 @@ class SegregatedHomogeneousPatientDataset(Dataset):
 
     def __getitem__(self, item):
         heterogeneous_graph, graph_label = self.data_list[item]
+        if self.remove_knn_edges:
+            del heterogeneous_graph[('lesion', 'NN', 'lesion')]
         # Let us make it homogeneous
         homogeneous_graph = self.convert_to_homogeneous_graph(heterogeneous_graph)
         # Column normalize the features
@@ -58,6 +61,7 @@ class SegregatedHeterogeneousPatientDataset(Dataset):
             filename = get_configurations_dtype_string(section='SETUP', key='SMALL_GRAPHS_FILENAME')
         self.data_list = pickle.load(open(filename, 'rb'))
         self.y = [graph_info[1] for graph_info in self.data_list]
+        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES', default_value=False)
         self.transform = transform
 
     def __len__(self):
@@ -65,6 +69,8 @@ class SegregatedHeterogeneousPatientDataset(Dataset):
 
     def __getitem__(self, item):
         heterogeneous_graph, graph_label = self.data_list[item]
+        if self.remove_knn_edges:
+            del heterogeneous_graph[('lesion', 'NN', 'lesion')]
         if self.transform is not None:
             heterogeneous_graph = self.transform(heterogeneous_graph)
         heterogeneous_graph = self.handle_isolated_edges(heterogeneous_graph)

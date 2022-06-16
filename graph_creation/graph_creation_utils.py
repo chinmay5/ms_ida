@@ -12,6 +12,12 @@ from environment_setup import get_configurations_dtype_string, get_configuration
 
 ssl_radiomic_features = np.load(get_configurations_dtype_string(section='SETUP', key='SSL_FEATURES_NUMPY_PATH'))
 
+
+class GraphMetadata(object):
+    def __init__(self):
+        self.scan_to_patient = None
+
+
 def fix_scan_order_global():
     subset_782_csv_path = get_configurations_dtype_string(section='SETUP', key='RAW_METADATA_CSV')
     scans = pd.read_csv(subset_782_csv_path)
@@ -57,7 +63,10 @@ def make_heterogeneous_dataset(all_scans_df_with_NN):
                   edge_type_names_dict)
     hetero_dataset = get_heterogeneous_dataset(edge_index, edge_type, edge_type_names_dict, scan_to_patients)
     # Let us add scan_to_patients info to this data object
-    hetero_dataset.scan_to_patients = scan_to_patients
+    # We use the metadata class for it to not throw errors during batching
+    scan_to_patient_metadata = GraphMetadata()
+    scan_to_patient_metadata.scan_to_patients = scan_to_patients
+    hetero_dataset.graph_metadata = scan_to_patient_metadata
     return hetero_dataset
 
 

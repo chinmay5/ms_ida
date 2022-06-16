@@ -9,7 +9,8 @@ import torch_geometric
 import torch_geometric.transforms as T
 from torch_geometric.data import Dataset
 
-from environment_setup import get_configurations_dtype_string, get_configurations_dtype_int
+from environment_setup import get_configurations_dtype_string, get_configurations_dtype_int, \
+    get_configurations_dtype_boolean
 
 
 class HomogeneousPatientDataset(Dataset):
@@ -21,6 +22,7 @@ class HomogeneousPatientDataset(Dataset):
         self.patient_list = annotated_data.loc[:, 'Patient']
         self.y = annotated_data.loc[:, 'New_Lesions_1y_Label']
         self.graph_folder = get_configurations_dtype_string(section='SETUP', key='PATIENT_HETERO_DATASET_ROOT_FOLDER')
+        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES', default_value=False)
         self.transform = transform
 
     def __len__(self):
@@ -30,8 +32,8 @@ class HomogeneousPatientDataset(Dataset):
         graph_name = f"{self.patient_list[item]}.pt"
         graph_label = self.y[item].item()
         heterogeneous_graph = torch.load(os.path.join(self.graph_folder, graph_name))
-        # TODO: Check how can we fix this
-        del heterogeneous_graph['scan_to_patients']
+        if self.remove_knn_edges:
+            del heterogeneous_graph[('lesion', 'NN', 'lesion')]
         # Let us make it homogeneous
         homogeneous_graph = self.convert_to_homogeneous_graph(heterogeneous_graph)
         # Column normalize the features
@@ -65,6 +67,7 @@ class HeterogeneousPatientDataset(Dataset):
         self.patient_list = annotated_data.loc[:, 'Patient']
         self.y = torch.as_tensor(annotated_data.loc[:, 'New_Lesions_1y_Label'], dtype=torch.long)
         self.graph_folder = get_configurations_dtype_string(section='SETUP', key='PATIENT_HETERO_DATASET_ROOT_FOLDER')
+        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES', default_value=False)
         self.transform = transform
 
     def __len__(self):
@@ -74,11 +77,13 @@ class HeterogeneousPatientDataset(Dataset):
         graph_name = f"{self.patient_list[item]}.pt"
         graph_label = self.y[item].item()
         heterogeneous_graph = torch.load(os.path.join(self.graph_folder, graph_name))
-        # TODO: Check how can we fix this
-        del heterogeneous_graph['scan_to_patients']
         if self.transform is not None:
             heterogeneous_graph = self.transform(heterogeneous_graph)
         heterogeneous_graph = self.handle_isolated_edges(heterogeneous_graph)
+        # This step done later since it is much more convenient.
+        # Remove the edges once all bases related to it are covered.
+        if self.remove_knn_edges:
+            del heterogeneous_graph[('lesion', 'NN', 'lesion')]
         return heterogeneous_graph, graph_label
 
     def __repr__(self):
@@ -125,8 +130,9 @@ def separate_large_and_small_graphs():
 
 if __name__ == '__main__':
     transform = T.NormalizeFeatures()
-    dataset = HomogeneousPatientDataset(transform=transform)
+    dataset = HeterogeneousPatientDataset(transform=transform)
     dataloader = torch_geometric.loader.DataLoader(dataset, batch_size=4, shuffle=False)
+    print(dataset[0])
     print(dataset.num_graphs)
     all_labels = []
     for graph, label in dataloader:

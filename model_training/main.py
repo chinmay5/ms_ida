@@ -10,7 +10,7 @@ from environment_setup import get_configurations_dtype_string_list, write_config
 
 # This line is important for raytune.
 # It was unable to run properly in multiple-GPU setup
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 from dataset.dataset_factory import get_dataset
 from model_training.train_eval import cross_validation_with_val_set
@@ -33,18 +33,24 @@ def logger(info):
 
 def main():
     start_time = time.time()
-    ray.init()
-    print(f"Is cuda available: {torch.cuda.is_available()}")
-    print(ray.cluster_resources())
     method_dict = {}
     conv_names = get_configurations_dtype_string_list(section='TRAINING', key='MODEL_TYPES')
     seed_everything(seed=42)
     dataset = get_dataset()
     # Write configurations to the disk
+    # Please do this from the main process.
+    # Once we do it, the initial set of configs are persisted
     write_configs_to_disk()
     # Determines how many samples from random grid search are made
     num_samples = 10
     sample_graph_data = dataset[0][0]
+    # Initialize raytune.
+    # Doing this after storing the configs is important.
+    # Otherwise, the updated env variable is not copied to each individual process.
+    # Thus, we can not start multiple processes in that scenario.
+    ray.init()
+    print(f"Is cuda available: {torch.cuda.is_available()}")
+    print(ray.cluster_resources())
     for conv_name in conv_names:
         test_roc, test_roc_std = cross_validation_with_val_set(
             dataset=dataset,

@@ -28,7 +28,7 @@ def create_heterogeneous_dataset_and_visualize(all_scans_df):
     # To compute permutations, we would need to use the `index` of the dataframe.
     hetero_dataset = make_heterogeneous_dataset(all_scans_df)
     print(hetero_dataset)
-    visualize_heterogeneous_dataset(hetero_dataset, hetero_dataset.scan_to_patients)
+    visualize_heterogeneous_dataset(hetero_dataset, hetero_dataset.graph_metadata.scan_to_patients)
 
 
 def visualize_heterogeneous_dataset(hetero_dataset, scan_to_patients, filename='small_viz'):
