@@ -1,7 +1,7 @@
-from environment_setup import get_configurations_dtype_int, get_configurations_dtype_string, \
-    get_configurations_dtype_boolean
+from environment_setup import get_configurations_dtype_int, get_configurations_dtype_boolean
 from graph_models.heterogeneous_models import GCNHetConv, GATHetConv, GraphConvHetConv, SAGEHetConv
-from graph_models.homogeneous_models import LinearModel, GCNHomConv, GATHomConv, SAGEHomConv, GraphConvHomConv
+from graph_models.homogeneous_models import LinearModel, GCNHomConv, GATHomConv, SAGEHomConv, GraphConvHomConv, \
+    SimpleConv
 
 
 def get_model(model_type, hidden_dim, num_layers, sample_graph_data):
@@ -21,21 +21,26 @@ def get_model(model_type, hidden_dim, num_layers, sample_graph_data):
                           node_feature_dim=node_feature_dim, num_classes=num_classes)
     elif model_type == 'sage':
         return SAGEHomConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers,
-                          node_feature_dim=node_feature_dim, num_classes=num_classes)
+                           node_feature_dim=node_feature_dim, num_classes=num_classes)
     elif model_type == 'graph_conv':
         return GraphConvHomConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers,
+                                node_feature_dim=node_feature_dim, num_classes=num_classes)
+    elif model_type == 'simple':
+        return SimpleConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers,
                           node_feature_dim=node_feature_dim, num_classes=num_classes)
     elif model_type == 'het_gcn':
-        return GCNHetConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers, node_feature_dim=node_feature_dim, num_classes=num_classes,
+        return GCNHetConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers,
+                          node_feature_dim=node_feature_dim, num_classes=num_classes,
                           hetero_dataset_sample=sample_graph_data)
     elif model_type == 'het_gat':
-        return GATHetConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers, node_feature_dim=node_feature_dim, num_classes=num_classes,
+        return GATHetConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers,
+                          node_feature_dim=node_feature_dim, num_classes=num_classes,
                           hetero_dataset_sample=sample_graph_data)
     elif model_type == 'het_sage':
         return SAGEHetConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers,
-                          node_feature_dim=node_feature_dim, num_classes=num_classes,
+                           node_feature_dim=node_feature_dim, num_classes=num_classes,
                            hetero_dataset_sample=sample_graph_data)
     elif model_type == 'het_graph_conv':
         return GraphConvHetConv(hidden_dim=hidden_dim, total_number_of_gnn_layers=num_layers,
-                          node_feature_dim=node_feature_dim, num_classes=num_classes,
+                                node_feature_dim=node_feature_dim, num_classes=num_classes,
                                 hetero_dataset_sample=sample_graph_data)

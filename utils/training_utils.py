@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import torch
 from sklearn.preprocessing import OneHotEncoder
 
 from environment_setup import PROJECT_ROOT_DIR
@@ -15,6 +16,24 @@ class LogWriterWrapper(object):
             self.summary_writer.add_scalar(*args, **kwargs)
 
 
+class CustomDictKey(object):
+    def __init__(self, key_name, key_iden):
+        super(CustomDictKey, self).__init__()
+        self.key_name = key_name
+        self.key_iden = key_iden
+
+    def __eq__(self, other):
+        return isinstance(other, CustomDictKey) and \
+               other.key_name == self.key_name and \
+               other.key_iden == self.key_iden
+
+    def __hash__(self):
+        return hash((self.key_name, self.key_iden))
+
+    def __repr__(self):
+        return f'{self.key_name} - {self.key_iden}'
+
+
 class LabelEncoder(object):
 
     def __init__(self):
@@ -25,6 +44,7 @@ class LabelEncoder(object):
 
     def __call__(self):
         return self.encoder
+
 
 class RunTimeConfigs(object):
     def __init__(self):
@@ -38,6 +58,9 @@ class RunTimeConfigs(object):
             for config, value in vars(self):
                 configfile.write(f"{config}: {value} \n")
 
-def read_configs():
-    configs = RunTimeConfigs()
-    # configs.RAW_METADATA_CSV =
+
+def drop_nodes(data):
+    # We can drop 30% of the nodes at random.
+    node_mask = torch.rand(data.num_nodes) > 0.3
+    data = data.subgraph(node_mask)
+    return data

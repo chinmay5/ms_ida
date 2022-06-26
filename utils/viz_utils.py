@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 import torch
+from matplotlib import pyplot as plt
 from torch_geometric.utils import degree, get_laplacian, to_dense_adj
 from tqdm import tqdm
 
@@ -245,6 +246,31 @@ def to_networkx_fail_safe(data, node_attrs=None, edge_attrs=None, to_undirected=
             feat_dict.update({key: values[key][i]})
 
     return G
+
+
+def plot_bar_plot(dictionary_to_plot, y_label, title, filename, output_dir, fontsize=15, color='g'):
+    dictionary_to_plot_sorted = {k: v for k, v in
+                                 sorted(dictionary_to_plot.items(), key=lambda item: item[0].key_iden)}
+    plt.title(title, fontsize=fontsize)
+    plt.bar([x.key_name for x in dictionary_to_plot_sorted.keys()], dictionary_to_plot_sorted.values(), color=color)
+    # plt.xticks(range(1, len(labels) + 1), labels, rotation=90, fontsize=10)
+    plt.ylabel(y_label, fontsize=fontsize)
+    # plt.xlabel('Methods', fontsize=40)
+    plt.xlabel('Graph size', fontsize=fontsize)
+    plt.tight_layout()
+    # Let us also save the results
+    if output_dir is not None:
+        save_results(output_dir=output_dir, filename=filename, plt=plt, is_img=True, dpi=200)
+    plt.show()
+
+
+def save_results(output_dir, filename, is_img, plt=None, df=None, **kwargs):
+    os.makedirs(output_dir, exist_ok=True)
+    filename = os.path.join(output_dir, filename)
+    if is_img:
+        plt.savefig(filename, **kwargs)
+    else:
+        df.to_csv(filename, **kwargs)
 
 
 if __name__ == '__main__':

@@ -47,6 +47,11 @@ def get_configurations_dtype_string_list(section, key, default_value=None):
     list_elements = comma_separated_list.split(",")
     return [x.strip() for x in list_elements]
 
+def get_configurations_dtype_int_list(section, key, default_value=None):
+    comma_separated_list = parser[section].get(key, fallback=default_value)
+    list_elements = comma_separated_list.split(",")
+    return [int(x.strip()) for x in list_elements]
+
 
 def write_configs_to_disk():
     """

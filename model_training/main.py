@@ -42,7 +42,7 @@ def main():
     # Once we do it, the initial set of configs are persisted
     write_configs_to_disk()
     # Determines how many samples from random grid search are made
-    num_samples = 10
+    num_samples = 5
     sample_graph_data = dataset[0][0]
     # Initialize raytune.
     # Doing this after storing the configs is important.

@@ -9,7 +9,7 @@ from environment_setup import get_configurations_dtype_string
 
 def generate_train_val_test_indices_for_single_split(dataset):
     train_indices, test_indices, _, _ = train_test_split(torch.arange(len(dataset)),
-                                                         dataset.y, test_size=0.11, stratify=dataset.y, random_state=42)
+                                                         dataset.y, test_size=0.10, stratify=dataset.graph_catogory_label.cpu().numpy().tolist(), random_state=42)
     train_and_val_dataset = [dataset[x.item()] for x in train_indices]
     train_and_val_labels = [dataset[x.item()][1] for x in train_indices]
     train_indices, val_indices, _, _ = train_test_split(torch.arange(len(train_and_val_dataset)),

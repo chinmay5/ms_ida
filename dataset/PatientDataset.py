@@ -1,9 +1,8 @@
-from collections import Counter
-
-import pickle
+from collections import Counter, defaultdict
 
 import os
 import pandas as pd
+import pickle
 import torch
 import torch_geometric
 import torch_geometric.transforms as T
@@ -13,7 +12,25 @@ from environment_setup import get_configurations_dtype_string, get_configuration
     get_configurations_dtype_boolean
 
 
-class HomogeneousPatientDataset(Dataset):
+class AbstractDataset(Dataset):
+    def __init__(self):
+        super(AbstractDataset, self).__init__()
+
+    def compute_graph_category(self):
+        diff_graph_threshold = get_configurations_dtype_int(section='SETUP', key='DIFF_GRAPH_THRESHOLD')
+        graph_categ = []
+        for idx in range(len(self.patient_list)):
+            graph_name = f"{self.patient_list[idx]}.pt"
+            heterogeneous_graph = torch.load(os.path.join(self.graph_folder, graph_name))
+            num_nodes = heterogeneous_graph['lesion'].x.shape[0]
+            if num_nodes <= diff_graph_threshold:
+                graph_categ.append(0)  # Small
+            else:
+                graph_categ.append(1)  # Large
+        return torch.as_tensor(graph_categ)
+
+
+class HomogeneousPatientDataset(AbstractDataset):
     def __init__(self, transform=None):
         super(HomogeneousPatientDataset, self).__init__()
         annotated_data_csv_location = get_configurations_dtype_string(section='SETUP',
@@ -22,8 +39,10 @@ class HomogeneousPatientDataset(Dataset):
         self.patient_list = annotated_data.loc[:, 'Patient']
         self.y = annotated_data.loc[:, 'New_Lesions_1y_Label']
         self.graph_folder = get_configurations_dtype_string(section='SETUP', key='PATIENT_HETERO_DATASET_ROOT_FOLDER')
-        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES', default_value=False)
+        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES',
+                                                                 default_value=False)
         self.transform = transform
+        self.graph_catogory_label = self.compute_graph_category()
 
     def __len__(self):
         return len(self.patient_list)
@@ -58,7 +77,7 @@ class HomogeneousPatientDataset(Dataset):
         return len(self.y)
 
 
-class HeterogeneousPatientDataset(Dataset):
+class HeterogeneousPatientDataset(AbstractDataset):
     def __init__(self, transform=None):
         super(HeterogeneousPatientDataset, self).__init__()
         annotated_data_csv_location = get_configurations_dtype_string(section='SETUP',
@@ -67,8 +86,10 @@ class HeterogeneousPatientDataset(Dataset):
         self.patient_list = annotated_data.loc[:, 'Patient']
         self.y = torch.as_tensor(annotated_data.loc[:, 'New_Lesions_1y_Label'], dtype=torch.long)
         self.graph_folder = get_configurations_dtype_string(section='SETUP', key='PATIENT_HETERO_DATASET_ROOT_FOLDER')
-        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES', default_value=False)
+        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES',
+                                                                 default_value=False)
         self.transform = transform
+        self.graph_catogory_label = self.compute_graph_category()
 
     def __len__(self):
         return len(self.patient_list)
@@ -130,12 +151,36 @@ def separate_large_and_small_graphs():
 
 if __name__ == '__main__':
     transform = T.NormalizeFeatures()
-    dataset = HeterogeneousPatientDataset(transform=transform)
+    dataset = HomogeneousPatientDataset(transform=transform)
     dataloader = torch_geometric.loader.DataLoader(dataset, batch_size=4, shuffle=False)
     print(dataset[0])
     print(dataset.num_graphs)
+    print(dataset.graph_catogory_label)
     all_labels = []
-    for graph, label in dataloader:
-        all_labels.extend(label.numpy().tolist())
-    print(Counter(all_labels))
+    graph_len_to_label = defaultdict(int)
+    num_nodes_to_label = defaultdict(list)
+    small_large = defaultdict(list)
+    thresh = 40
+    for idx in range(len(dataset)):
+        graph, label = dataset[idx]
+        all_labels.append(label)
+        graph_len_to_label[graph.edge_index.shape[1]] = label
+        if graph.edge_index.shape[1] <= thresh:
+            small_large['small'].append(label)
+        else:
+            small_large['large'].append(label)
+        # Same for the number of nodes
+        if graph.x.shape[0] <= thresh // 2:
+            num_nodes_to_label['small'].append(label)
+        else:
+            num_nodes_to_label['large'].append(label)
 
+    print(Counter(all_labels))
+    # for graph_size, counts in graph_len_to_label.items():
+    #     print(f"{graph_size} ----- {counts}")
+    # plt.hist(graph_len_to_label)
+    # plt.show()
+    for size in ['small', 'large']:
+        print(
+            f"{size} has the edge distribution: {Counter(small_large[size])} and node distribution  {Counter(num_nodes_to_label[size])}")
+    # Since we want to check the dataloader

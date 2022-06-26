@@ -1,12 +1,12 @@
-from functools import partial
-
 import numpy as np
 import os
 import pickle
 import time
 import torch
-from itertools import product
-from sklearn.metrics import roc_auc_score
+from functools import partial
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
 from torch import nn
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
@@ -16,11 +16,9 @@ from torch_geometric.loader import DataLoader
 from dataset.dataset_factory import get_dataset
 from environment_setup import get_configurations_dtype_string, PROJECT_ROOT_DIR, get_configurations_dtype_boolean
 from graph_models.model_factory import get_model
+from model_training.eval_utils import eval_loss, eval_acc, eval_roc_auc, eval_graph_len_acc, \
+    plot_results_based_on_graph_size
 from utils.training_utils import LogWriterWrapper, LabelEncoder
-
-from ray import tune
-from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -29,7 +27,8 @@ def train_val_model(config, sample_graph_data, epochs, batch_size,
                     lr_decay_factor, lr_decay_step_size,
                     weight_decay, logger=None, base_log_dir=None):
     # We would directly load the datasets here.
-    model = get_model(model_type='gcn', hidden_dim=config["hidden"], num_layers=config["num_layers"], sample_graph_data=sample_graph_data)
+    model = get_model(model_type='sage', hidden_dim=config["hidden"], num_layers=config["num_layers"],
+                      sample_graph_data=sample_graph_data)
     print(model)
     log_dir = os.path.join(base_log_dir, f"_layers_{config['num_layers']}_hidden_dim_{config['hidden']}")
     os.makedirs(log_dir, exist_ok=True)
@@ -50,7 +49,6 @@ def train_val_model(config, sample_graph_data, epochs, batch_size,
     print(class_balance_weights)
     train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size, shuffle=False)
-
 
     model.to(device).reset_parameters()
     optimizer = Adam(model.parameters(), lr=config["lr"], weight_decay=weight_decay)
@@ -99,8 +97,6 @@ def train_val_model(config, sample_graph_data, epochs, batch_size,
     # Let us load the best model
     # model.load_state_dict(torch.load('best_model.pth'))
 
-
-
     t_end = time.perf_counter()
 
     # print(durations)
@@ -132,55 +128,6 @@ def train(model, optimizer, loader, criterion, epoch, train_writer):
     return avg_train_loss
 
 
-def eval_acc(model, loader):
-    model.eval()
-    correct = 0
-    for data, labels in loader:
-        data, labels = data.to(device), labels.to(device)
-        with torch.no_grad():
-            pred = model(data).max(1)[1]
-        correct += pred.eq(labels.view(-1)).sum().item()
-    return correct / len(loader.dataset)
-
-
-def eval_roc_auc(model, loader, enc, epoch=0, writer=None):
-    model.eval()
-    outGT = torch.FloatTensor().to(device)
-    outPRED = torch.FloatTensor().to(device)
-    for data, labels in loader:
-        data, labels = data.to(device), labels.to(device)
-        with torch.no_grad():
-            pred = model(data)
-        outPRED = torch.cat((outPRED, pred), 0)
-        outGT = torch.cat((outGT, labels), 0)
-    predictions = torch.softmax(outPRED, dim=1)
-    predictions, target = predictions.cpu().numpy(), outGT.cpu().numpy()
-    # Encoder is callable.
-    # Hence, we execute callable which returns the self.encoder instance
-    target_one_hot = enc().transform(target.reshape(-1, 1)).toarray()  # Reshaping needed by the library
-    # Arguments take 'GT' before taking 'predictions'
-    roc_auc_value = roc_auc_score(target_one_hot, predictions)
-    if writer is not None:
-        writer.add_scalar('roc', roc_auc_value, global_step=epoch)
-    return roc_auc_value
-
-
-def eval_loss(model, loader, criterion, epoch, writer):
-    model.eval()
-    # Some information needed for logging on tensorboard
-    logging_base = epoch * len(loader)
-    total_loss = 0
-    for idx, (data, labels) in enumerate(loader):
-        data, labels = data.to(device), labels.to(device)
-        with torch.no_grad():
-            out = model(data)
-        loss = criterion(out, labels.view(-1)).item()
-        total_loss += loss
-    avg_val_loss = total_loss / len(loader)
-    writer.add_scalar('loss', avg_val_loss, global_step=epoch)
-    return avg_val_loss
-
-
 def main():
     seed_everything(seed=42)
     dataset = get_dataset()
@@ -192,10 +139,10 @@ def main():
     lr_decay_factor = 0.5
     lr_decay_step_size = 400
     lr = 1e-4
-    num_samples=10
+    num_samples = 2
     # END: Hyperparameters
     config = {
-        "hidden": tune.sample_from(lambda _: 2 ** np.random.randint(2, 9)),
+        "hidden": tune.sample_from(lambda _: 2 ** np.random.randint(5, 11)),
         "num_layers": tune.grid_search([2, 3]),
         "lr": tune.loguniform(1e-5, 1e-1),
     }
@@ -211,17 +158,16 @@ def main():
         # parameter_columns=["l1", "l2", "lr", "batch_size"],
         metric_columns=["roc_auc", "hidden", "num_layers", "lr"])
 
-
     result = tune.run(
         partial(train_val_model,
-            sample_graph_data=sample_graph_data,
-            epochs=epochs,
-            batch_size=batch_size,
-            lr_decay_factor=lr_decay_factor,
-            lr_decay_step_size=lr_decay_step_size,
-            weight_decay=1e-5,
-            logger=None,
-            base_log_dir=base_log_dir),
+                sample_graph_data=sample_graph_data,
+                epochs=epochs,
+                batch_size=batch_size,
+                lr_decay_factor=lr_decay_factor,
+                lr_decay_step_size=lr_decay_step_size,
+                weight_decay=1e-5,
+                logger=None,
+                base_log_dir=base_log_dir),
         resources_per_trial={"cpu": 8, "gpu": 1},
         config=config,
         num_samples=num_samples,
@@ -234,11 +180,15 @@ def main():
         best_trial.last_result["roc_auc"]))
 
     temp_folder_path = get_configurations_dtype_string(section='SETUP', key='TEMP_FOLDER_PATH')
-    test_dataset = pickle.load(open(os.path.join(temp_folder_path, 'test_set.pkl'), 'rb'))
+
+    if get_configurations_dtype_boolean(section='TRAINING', key='IS_HETERO'):
+        test_dataset = pickle.load(open(os.path.join(temp_folder_path, 'test_set_het.pkl'), 'rb'))
+    else:
+        test_dataset = pickle.load(open(os.path.join(temp_folder_path, 'test_set_hom.pkl'), 'rb'))
+
     test_loader = DataLoader(test_dataset, batch_size, shuffle=False)
 
-
-    best_trained_model = get_model(hidden_dim=best_trial.config["hidden"],
+    best_trained_model = get_model(model_type='sage', hidden_dim=best_trial.config["hidden"],
                                    num_layers=best_trial.config["num_layers"], sample_graph_data=sample_graph_data)
     best_trained_model.to(device)
 
@@ -249,24 +199,10 @@ def main():
 
     enc = LabelEncoder()
     test_roc = eval_roc_auc(best_trained_model, test_loader, enc)
-    print("Best trial test set accuracy: {}".format(test_roc))
-
-    # for num_layers, hidden in product(layers, hiddens):
-    #     model = get_model(hidden_dim=config["hidden"], num_layers=num_layers, sample_graph_data=sample_graph_data)
-    #     log_dir = os.path.join(base_log_dir, f"_layers_{num_layers}_hidden_dim_{hidden}")
-    #     os.makedirs(log_dir, exist_ok=True)
-    #     test_roc = train_val_model(
-    #         model=model,
-    #         epochs=epochs,
-    #         batch_size=batch_size,
-    #         lr=lr,
-    #         lr_decay_factor=lr_decay_factor,
-    #         lr_decay_step_size=lr_decay_step_size,
-    #         weight_decay=1e-5,
-    #         logger=None,
-    #         log_dir=log_dir,
-    #     )
-    #     print(f"For layers {num_layers} and hidden size {hidden}, the test ROC is {test_roc}")
+    test_acc, size_cm_dict = eval_graph_len_acc(best_trained_model, test_loader.dataset)
+    plot_results_based_on_graph_size(size_cm_dict, output_dir=base_log_dir, filename_acc='acc', filename_roc='roc')
+    print("Best trial test set roc: {}".format(test_roc))
+    print("Best trial test set accuracy: {}".format(test_acc))
 
 
 if __name__ == '__main__':

@@ -1,12 +1,12 @@
 import numpy as np
-from functools import partial
-
-import pickle
-
 import os
-import time
+import pickle
 import torch
-from sklearn.metrics import roc_auc_score
+from functools import partial
+# ray tune for hyper-parameter optimization
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
 from sklearn.model_selection import StratifiedKFold
 from torch import tensor, nn
 from torch.optim import Adam
@@ -15,12 +15,8 @@ from torch_geometric.loader import DataLoader
 
 from environment_setup import get_configurations_dtype_string, PROJECT_ROOT_DIR
 from graph_models.model_factory import get_model
+from model_training.eval_utils import eval_loss, eval_acc, eval_roc_auc
 from utils.training_utils import LogWriterWrapper, LabelEncoder
-
-# ray tune for hyper-parameter optimization
-from ray import tune
-from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -109,11 +105,13 @@ def cross_validation_with_val_set(dataset, folds, model_type, epochs, batch_size
     return test_roc.mean().item(), torch.std(test_roc).item()
 
 
-def train_and_save_best_model(config, weight_decay, class_balance_weights, fold, epochs, logger, lr_decay_factor, lr_decay_step_size,
+def train_and_save_best_model(config, weight_decay, class_balance_weights, fold, epochs, logger, lr_decay_factor,
+                              lr_decay_step_size,
                               train_loader, val_loader, sample_graph_data, enc, model_type):
     max_val_roc_auc = 0
     # BEGIN: Model Initialization
-    model = get_model(model_type=model_type, hidden_dim=config["hidden"], num_layers=config["num_layers"], sample_graph_data=sample_graph_data)
+    model = get_model(model_type=model_type, hidden_dim=config["hidden"], num_layers=config["num_layers"],
+                      sample_graph_data=sample_graph_data)
     print(model)
     model.to(device).reset_parameters()
     optimizer = Adam(model.parameters(), lr=config["lr"], weight_decay=weight_decay)
@@ -180,7 +178,7 @@ def k_fold(dataset, folds):
         skf = StratifiedKFold(folds, shuffle=True, random_state=42)
 
         test_indices, train_indices = [], []
-        for _, idx in skf.split(torch.zeros(len(dataset)), dataset.y):
+        for _, idx in skf.split(torch.zeros(len(dataset)), dataset.graph_catogory_label.cpu().numpy().tolist()):
             test_indices.append(torch.from_numpy(idx).to(torch.long))
 
         val_indices = [test_indices[i - 1] for i in range(folds)]
@@ -223,52 +221,3 @@ def train(model, optimizer, loader, criterion, epoch, train_writer):
     avg_train_loss = total_loss / len(loader)
     train_writer.add_scalar('loss', avg_train_loss, global_step=epoch)
     return avg_train_loss
-
-
-def eval_acc(model, loader):
-    model.eval()
-
-    correct = 0
-    for data, labels in loader:
-        data, labels = data.to(device), labels.to(device)
-        with torch.no_grad():
-            pred = model(data).max(1)[1]
-        correct += pred.eq(labels.view(-1)).sum().item()
-    return correct / len(loader.dataset)
-
-
-def eval_roc_auc(model, loader, enc, epoch=0, writer=None):
-    model.eval()
-    outGT = torch.FloatTensor().to(device)
-    outPRED = torch.FloatTensor().to(device)
-    for data, labels in loader:
-        data, labels = data.to(device), labels.to(device)
-        with torch.no_grad():
-            pred = model(data)
-        outPRED = torch.cat((outPRED, pred), 0)
-        outGT = torch.cat((outGT, labels), 0)
-    predictions = torch.softmax(outPRED, dim=1)
-    predictions, target = predictions.cpu().numpy(), outGT.cpu().numpy()
-    # Encoder is callable.
-    # Hence, we execute callable which returns the self.encoder instance
-    target_one_hot = enc().transform(target.reshape(-1, 1)).toarray()  # Reshaping needed by the library
-    # Arguments take 'GT' before taking 'predictions'
-    roc_auc_value = roc_auc_score(target_one_hot, predictions)
-    if writer is not None:
-        writer.add_scalar('roc', roc_auc_value, global_step=epoch)
-    return roc_auc_value
-
-
-def eval_loss(model, loader, criterion, epoch, writer):
-    model.eval()
-    # Some information needed for logging on tensorboard
-    total_loss = 0
-    for idx, (data, labels) in enumerate(loader):
-        data, labels = data.to(device), labels.to(device)
-        with torch.no_grad():
-            out = model(data)
-        loss = criterion(out, labels.view(-1)).item()
-        total_loss += loss
-    avg_val_loss = total_loss / len(loader)
-    writer.add_scalar('loss', avg_val_loss, global_step=epoch)
-    return avg_val_loss
