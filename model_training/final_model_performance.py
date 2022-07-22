@@ -166,7 +166,7 @@ def main(model_type):
     num_folds = 10
     sample_graph_data = dataset[0][0]
 
-    apply_node_drop = True  # model_type != 'linear'
+    apply_node_drop = False  # model_type != 'linear'
     # Check if cuda available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     results = []

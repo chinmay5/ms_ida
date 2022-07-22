@@ -86,8 +86,8 @@ def stats_for_each_split(dataset, model, folds, batch_size,
     final_cm = np.sum(test_cm_list, axis=0)
     print(final_cm)
     # Let us plot the final dictionary
-    plot_avg_of_dictionary(input_dict=roc_dict_avg, y_label='roc', filename=f'{model}_roc_avg_all_folds', output_dir=test_images_dir, color='g')
-    plot_avg_of_dictionary(input_dict=acc_dict_avg, y_label='acc', filename=f'{model}_acc_avg_all_folds', output_dir=test_images_dir, color='g')
+    plot_avg_of_dictionary(input_dict=roc_dict_avg, y_label='roc', filename=f'{model}_roc_avg_all_folds', output_dir=test_images_dir, color='r')
+    plot_avg_of_dictionary(input_dict=acc_dict_avg, y_label='acc', filename=f'{model}_acc_avg_all_folds', output_dir=test_images_dir, color='r')
     return test_roc_auc_mean, test_roc_auc_std, test_accuracy_mean, test_accuracy_std
 
 
@@ -99,7 +99,7 @@ def main(checkpoint_dir, model_type, hidden, num_layers):
     # Once we do it, the initial set of configs are persisted
     write_configs_to_disk()
     # Determines how many samples from random grid search are made
-    num_folds = 5
+    num_folds = 10
     sample_graph_data = dataset[0][0]
 
     # Check if cuda available
@@ -123,7 +123,7 @@ def main(checkpoint_dir, model_type, hidden, num_layers):
 if __name__ == '__main__':
     hidden = 256
     num_layers = 2
-    model_type = 'sage'
+    model_type = 'gat'
     checkpoint_dir = os.path.join(PROJECT_ROOT_DIR,
                                   get_configurations_dtype_string(section='TRAINING', key='LOG_DIR'),
                                   f'_layers_{num_layers}_hidden_dim_{hidden}'
