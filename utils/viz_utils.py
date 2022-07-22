@@ -14,7 +14,6 @@ from tqdm import tqdm
 from environment_setup import PROJECT_ROOT_DIR, get_configurations_dtype_string
 
 viz_save_rel_path = get_configurations_dtype_string(section='VISUALIZATIONS', key='SAVE_HTML_REL_PATH')
-plot_title = get_configurations_dtype_string(section='VISUALIZATIONS', key='PLOT_TITLE')
 viz_save_path = os.path.join(PROJECT_ROOT_DIR, viz_save_rel_path)
 # Make the directory
 os.makedirs(viz_save_path, exist_ok=True)
@@ -37,26 +36,28 @@ def plot_heterogeneous_3d_graph(hetero_dataset, scan_to_patients, out_file):
     # Let us generate separate edge traces for each of the edge types
     all_edge_traces = create_edge_trace_hetero(pos=pos, hetero_dataset=hetero_dataset, edge_colors=edge_colors, edge_widths=edge_widhts)
     # Include the traces we want to plot and create a figure
-    layout = create_layout()
+    patient_name = get_plot_title(scan_to_patients=scan_to_patients)
+    layout = create_layout(patient_name)
     data = [*all_edge_traces, trace_nodes]
     # To make our central nodes more visible, we can create another trace for the same.
     fig = go.Figure(data=data, layout=layout)
     pio.write_html(fig, os.path.join(viz_save_path, out_file))
 
 
+def get_plot_title(scan_to_patients):
+    return f"{list(scan_to_patients.values())[0][0]}_lesion_graph"
 
 
 def plot_3d_graph(edge_list, m_graph, scan_to_patients, out_file='sample.html', node_display_info='markers', size=10):
-    # Keep track of `chexpert label` nodes since we would like to have them distinct
     # We use lesion locations as index.
     # This is useful when we are working with the smaller dataframe of a single patient
-    patient_names = [patient_info[5] for scan_name, patient_info in scan_to_patients.items()]
-
+    node_labels = [patient_info[5] for scan_name, patient_info in scan_to_patients.items()]
+    patient_name = get_plot_title(scan_to_patients=scan_to_patients)
     x_edges, x_nodes, y_edges, y_nodes, z_edges, z_nodes = spring_layout(edge_list, m_graph)
     trace_edges = create_edge_trace(x_edges, y_edges, z_edges)
     # create a trace for the nodes
-    trace_nodes = create_node_trace(node_display_info, patient_names, size, x_nodes, y_nodes, z_nodes)
-    layout = create_layout()
+    trace_nodes = create_node_trace(node_display_info=node_display_info, node_labels=node_labels, size=size, x_nodes=x_nodes, y_nodes=y_nodes, z_nodes=z_nodes)
+    layout = create_layout(plot_title=patient_name)
     # Include the traces we want to plot and create a figure
     data = [trace_edges, trace_nodes]
     # To make our central nodes more visible, we can create another trace for the same.
@@ -64,7 +65,7 @@ def plot_3d_graph(edge_list, m_graph, scan_to_patients, out_file='sample.html', 
     pio.write_html(fig, os.path.join(viz_save_path, out_file))
 
 
-def create_layout():
+def create_layout(plot_title):
     # we need to set the axis for the plot
     axis = dict(showbackground=False,
                 showline=False,
@@ -248,18 +249,22 @@ def to_networkx_fail_safe(data, node_attrs=None, edge_attrs=None, to_undirected=
     return G
 
 
-def plot_bar_plot(dictionary_to_plot, y_label, title, filename, output_dir, fontsize=15, color='g'):
+def plot_bar_plot(dictionary_to_plot, y_label, title, filename, output_dir, fontsize=10, color='g'):
     dictionary_to_plot_sorted = {k: v for k, v in
                                  sorted(dictionary_to_plot.items(), key=lambda item: item[0].key_iden)}
     plt.title(title, fontsize=fontsize)
     plt.bar([x.key_name for x in dictionary_to_plot_sorted.keys()], dictionary_to_plot_sorted.values(), color=color)
     # plt.xticks(range(1, len(labels) + 1), labels, rotation=90, fontsize=10)
     plt.ylabel(y_label, fontsize=fontsize)
+    plt.ylim([0, 1])
     # plt.xlabel('Methods', fontsize=40)
     plt.xlabel('Graph size', fontsize=fontsize)
+
     plt.tight_layout()
     # Let us also save the results
     if output_dir is not None:
+        # Removing extra period symbols since they cause issues while trying to save the files.
+        filename = filename.replace(".", "")
         save_results(output_dir=output_dir, filename=filename, plt=plt, is_img=True, dpi=200)
     plt.show()
 

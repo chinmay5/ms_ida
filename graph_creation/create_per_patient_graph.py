@@ -4,7 +4,7 @@ import pandas as pd
 import torch
 
 from environment_setup import get_configurations_dtype_string, get_configurations_dtype_int
-from graph_creation.create_small_graph import visualize_heterogeneous_dataset
+from graph_creation.create_small_graph import visualize_heterogeneous_and_homogeneous_dataset
 from graph_creation.graph_creation_utils import add_knn_nodes_to_df, make_heterogeneous_dataset
 
 
@@ -67,7 +67,7 @@ def test_graph_creation_for_one_patient(patient_name='m819631'):
     # Let us also plot this graph
     hetero_dataset_save_path = os.path.join(temp_dataset_folder, f'{patient_name}.pt')
     hetero_dataset = torch.load(hetero_dataset_save_path)
-    visualize_heterogeneous_dataset(hetero_dataset, hetero_dataset.scan_to_patients, filename=patient_name)
+    visualize_heterogeneous_and_homogeneous_dataset(hetero_dataset, hetero_dataset.scan_to_patients, filename=patient_name)
 
 
 if __name__ == '__main__':

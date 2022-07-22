@@ -47,9 +47,9 @@ def cross_validation_with_val_set(dataset, folds, model_type, epochs, batch_size
         enc = LabelEncoder()
         # Parameters specific to ray tune
         config = {
-            "hidden": tune.sample_from(lambda _: 2 ** np.random.randint(4, 9)),
-            "num_layers": tune.grid_search([2, 3, 4]),
-            "lr": tune.loguniform(1e-5, 1e-1),
+            "hidden": tune.grid_search([64, 128, 256]),
+            "num_layers": tune.grid_search([2, 3]),
+            "lr": tune.loguniform(1e-5, 1e-3),
         }
 
         scheduler = ASHAScheduler(
@@ -157,6 +157,17 @@ def train_and_save_best_model(config, weight_decay, class_balance_weights, fold,
         tune.report(roc_auc=val_roc)
 
 
+def sanity_check(train_indices, val_indices, test_indices):
+    per_split_result = []
+    for idx in range(len(train_indices)):
+        train_set = set(train_indices[idx].numpy().tolist())
+        val_set = set(val_indices[idx].numpy().tolist())
+        test_set = set(test_indices[idx].numpy().tolist())
+        per_split_result.append(all([len(train_set.intersection(val_set)) == 0, len(val_set.intersection(test_set)) == 0,
+             len(train_set.intersection(test_set)) == 0]))
+    return all(per_split_result)
+
+
 def k_fold(dataset, folds):
     # We define the splits once and re-use them.
     # This is one way of reducing possible stochasticity.
@@ -178,10 +189,14 @@ def k_fold(dataset, folds):
         skf = StratifiedKFold(folds, shuffle=True, random_state=42)
 
         test_indices, train_indices = [], []
-        for _, idx in skf.split(torch.zeros(len(dataset)), dataset.graph_catogory_label.cpu().numpy().tolist()):
+        # for _, idx in skf.split(torch.zeros(len(dataset)), dataset.graph_catogory_label.cpu().numpy().tolist()):
+        for _, idx in skf.split(torch.zeros(len(dataset)), dataset.y.tolist()):
             test_indices.append(torch.from_numpy(idx).to(torch.long))
 
         val_indices = [test_indices[i - 1] for i in range(folds)]
+        # 70-20-10 attempt
+        # test_indices = [torch.cat((test_indices[i], test_indices[i - 1])) for i in range(folds)]
+        # val_indices = [torch.cat((test_indices[i - 2], test_indices[i - 3])) for i in range(folds)]
 
         for i in range(folds):
             train_mask = torch.ones(len(dataset), dtype=torch.bool)
@@ -189,6 +204,7 @@ def k_fold(dataset, folds):
             train_mask[val_indices[i]] = 0
             train_indices.append(train_mask.nonzero(as_tuple=False).view(-1))
         # Now, let us go ahead and save these values
+        assert sanity_check(train_indices, val_indices, test_indices), "Something wrong with the splits"
         os.makedirs(k_fold_split_path, exist_ok=False)  # Exists ok is not fine here.
         pickle.dump(train_indices, open(os.path.join(k_fold_split_path, "train_indices.pkl"), 'wb'))
         pickle.dump(val_indices, open(os.path.join(k_fold_split_path, "val_indices.pkl"), 'wb'))

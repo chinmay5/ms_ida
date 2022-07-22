@@ -6,7 +6,9 @@ import pickle
 import torch
 import torch_geometric
 import torch_geometric.transforms as T
+from matplotlib import pyplot as plt
 from torch_geometric.data import Dataset
+from torch_geometric.transforms import KNNGraph
 
 from environment_setup import get_configurations_dtype_string, get_configurations_dtype_int, \
     get_configurations_dtype_boolean
@@ -15,6 +17,15 @@ from environment_setup import get_configurations_dtype_string, get_configuration
 class AbstractDataset(Dataset):
     def __init__(self):
         super(AbstractDataset, self).__init__()
+        use_2y = get_configurations_dtype_boolean(section='SETUP', key='USE_2Y')
+        if use_2y:
+            self.annotated_data_csv_location = get_configurations_dtype_string(section='SETUP',
+                                                                      key='ANNOTATED_DATA_2Y_CSV_LOCATION')
+            self.label_column = 'New_Lesions_2y_Label'
+        else:
+            self.annotated_data_csv_location = get_configurations_dtype_string(section='SETUP',
+                                                                               key='ANNOTATED_DATA_1Y_CSV_LOCATION')
+            self.label_column = 'New_Lesions_1y_Label'
 
     def compute_graph_category(self):
         diff_graph_threshold = get_configurations_dtype_int(section='SETUP', key='DIFF_GRAPH_THRESHOLD')
@@ -33,11 +44,9 @@ class AbstractDataset(Dataset):
 class HomogeneousPatientDataset(AbstractDataset):
     def __init__(self, transform=None):
         super(HomogeneousPatientDataset, self).__init__()
-        annotated_data_csv_location = get_configurations_dtype_string(section='SETUP',
-                                                                      key='ANNOTATED_DATA_CSV_LOCATION')
-        annotated_data = pd.read_csv(annotated_data_csv_location)
+        annotated_data = pd.read_csv(self.annotated_data_csv_location)
         self.patient_list = annotated_data.loc[:, 'Patient']
-        self.y = annotated_data.loc[:, 'New_Lesions_1y_Label']
+        self.y = annotated_data.loc[:, self.label_column]
         self.graph_folder = get_configurations_dtype_string(section='SETUP', key='PATIENT_HETERO_DATASET_ROOT_FOLDER')
         self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES',
                                                                  default_value=False)
@@ -80,11 +89,9 @@ class HomogeneousPatientDataset(AbstractDataset):
 class HeterogeneousPatientDataset(AbstractDataset):
     def __init__(self, transform=None):
         super(HeterogeneousPatientDataset, self).__init__()
-        annotated_data_csv_location = get_configurations_dtype_string(section='SETUP',
-                                                                      key='ANNOTATED_DATA_CSV_LOCATION')
-        annotated_data = pd.read_csv(annotated_data_csv_location)
+        annotated_data = pd.read_csv(self.annotated_data_csv_location)
         self.patient_list = annotated_data.loc[:, 'Patient']
-        self.y = torch.as_tensor(annotated_data.loc[:, 'New_Lesions_1y_Label'], dtype=torch.long)
+        self.y = torch.as_tensor(annotated_data.loc[:, self.label_column], dtype=torch.long)
         self.graph_folder = get_configurations_dtype_string(section='SETUP', key='PATIENT_HETERO_DATASET_ROOT_FOLDER')
         self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES',
                                                                  default_value=False)
@@ -149,22 +156,76 @@ def separate_large_and_small_graphs():
     pickle.dump(small_patients_list, open(small_graphs_filename, 'wb'))
 
 
+class KNNPatientDataset(HomogeneousPatientDataset):
+    def __init__(self, transform=None):
+        super(KNNPatientDataset, self).__init__()
+        annotated_data = pd.read_csv(self.annotated_data_csv_location)
+        self.num_neighbours = get_configurations_dtype_int(section='SETUP', key='NUM_FEATURE_NEIGHBOURS')
+        self.patient_list = annotated_data.loc[:, 'Patient']
+        self.y = annotated_data.loc[:, self.label_column]
+        self.graph_folder = get_configurations_dtype_string(section='SETUP', key='PATIENT_HETERO_DATASET_ROOT_FOLDER')
+        self.remove_knn_edges = get_configurations_dtype_boolean(section='TRAINING', key='REMOVE_KNN_EDGES',
+                                                                 default_value=False)
+        self.transform = transform
+        self.graph_catogory_label = self.compute_graph_category()
+
+    def __len__(self):
+        return len(self.patient_list)
+
+    def __getitem__(self, item):
+        graph_name = f"{self.patient_list[item]}.pt"
+        graph_label = self.y[item].item()
+        heterogeneous_graph = torch.load(os.path.join(self.graph_folder, graph_name))
+        # We will remove all the edges that are present in the graph
+        del heterogeneous_graph[('lesion', 'NN', 'lesion')]
+        del heterogeneous_graph[('lesion', 'LesionLocation', 'lesion')]
+        # Let us make it homogeneous
+        homogeneous_graph = self.convert_to_homogeneous_graph(heterogeneous_graph)
+        homogeneous_graph.pos = homogeneous_graph.x
+        knn_graph_creator = KNNGraph(k=self.num_neighbours)
+        knn_homogeneous_graph = knn_graph_creator(homogeneous_graph)
+
+        # Column normalize the features
+        if self.transform is not None:
+            knn_homogeneous_graph = self.transform(knn_homogeneous_graph)
+        return knn_homogeneous_graph, graph_label
+
+    @property
+    def num_graphs(self):
+        return len(self.y)
+
+
+def plot_histogram(num_nodes_to_label):
+    fontsize = 15
+    plt.rcParams.update({'font.size': fontsize})
+    # Hacky fix since "small" comes later than "large" alphabetically
+    num_nodes_to_label = {k: v for k, v in
+                                 sorted(num_nodes_to_label.items(),reverse=True)}
+
+    plt.title("Num nodes vs. Occurrence")
+    plt.bar(range(len(num_nodes_to_label)), [len(x) for x in num_nodes_to_label.values()],
+            tick_label=list(num_nodes_to_label.keys()), color='c')
+    plt.xlabel('Graph size')
+    plt.ylabel("Occurrence")
+    plt.show()
+
+
 if __name__ == '__main__':
     transform = T.NormalizeFeatures()
-    dataset = HomogeneousPatientDataset(transform=transform)
+    dataset = KNNPatientDataset(transform=transform)
     dataloader = torch_geometric.loader.DataLoader(dataset, batch_size=4, shuffle=False)
     print(dataset[0])
     print(dataset.num_graphs)
     print(dataset.graph_catogory_label)
     all_labels = []
-    graph_len_to_label = defaultdict(int)
+    graph_len_occurrence = defaultdict(int)
     num_nodes_to_label = defaultdict(list)
     small_large = defaultdict(list)
-    thresh = 40
+    thresh = 20
     for idx in range(len(dataset)):
         graph, label = dataset[idx]
         all_labels.append(label)
-        graph_len_to_label[graph.edge_index.shape[1]] = label
+        graph_len_occurrence[graph.x.shape[0]] += 1
         if graph.edge_index.shape[1] <= thresh:
             small_large['small'].append(label)
         else:
@@ -176,10 +237,9 @@ if __name__ == '__main__':
             num_nodes_to_label['large'].append(label)
 
     print(Counter(all_labels))
-    # for graph_size, counts in graph_len_to_label.items():
-    #     print(f"{graph_size} ----- {counts}")
-    # plt.hist(graph_len_to_label)
-    # plt.show()
+    for graph_size, counts in graph_len_occurrence.items():
+        print(f"{graph_size} ----- {counts}")
+    plot_histogram(num_nodes_to_label)
     for size in ['small', 'large']:
         print(
             f"{size} has the edge distribution: {Counter(small_large[size])} and node distribution  {Counter(num_nodes_to_label[size])}")

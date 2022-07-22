@@ -9,13 +9,13 @@ from torch_geometric.utils import k_hop_subgraph
 from tqdm import tqdm
 
 from dataset.dataset_factory import get_dataset
-from environment_setup import get_configurations_dtype_string
+from environment_setup import get_configurations_dtype_string, PROJECT_ROOT_DIR
 from graph_models.model_factory import get_model
 from utils.viz_utils import to_networkx_fail_safe, plot_3d_graph
 
 
 class CustomGNNExplainer(GNNExplainer):
-    def __init__(self, model, epochs: int = 100, lr: float = 0.01,
+    def __init__(self, model, epochs: int = 1000, lr: float = 0.01,
                  num_hops=None, return_type: str = 'log_prob',
                  feat_mask_type: str = 'feature', allow_edge_mask: bool = True,
                  log: bool = True, graph_data=None, **kwargs):
@@ -175,16 +175,32 @@ def execute_gnn_explainer(model, optimizer, graph, graph_label):
     plt.show()
 
 
-def visualize_model():
-    best_config_dict = {
-        "hidden": 128,
-        "num_layers": 2
-    }
+def get_fold_from_index(graph_idx):
+    k_fold_split_path = get_configurations_dtype_string(section='SETUP', key='K_FOLD_SPLIT_PATH')
+    num_folds = pickle.load(open(os.path.join(k_fold_split_path, "num_splits.pkl"), 'rb'))
+    print(f"Using a pre-defined {num_folds} fold split. Done for easy reproducibility.")
+    test_indices = pickle.load(open(os.path.join(k_fold_split_path, "test_indices.pkl"), 'rb'))
+    for fold, indices in enumerate(test_indices):
+        if graph_idx in indices:
+            return fold
+
+
+def explain_model_prediction():
+    hidden = 256
+    num_layers = 2
+    model_type = 'sage'
     dataset = get_dataset()
-    sample_graph_data = dataset[0][0]
-    graph_label = dataset[0][1]
-    model = get_model(model_type='gcn', hidden_dim=best_config_dict["hidden"],
-                      num_layers=best_config_dict["num_layers"], sample_graph_data=sample_graph_data)
+    checkpoint_dir = os.path.join(PROJECT_ROOT_DIR,
+                                  get_configurations_dtype_string(section='TRAINING', key='LOG_DIR'),
+                                  f'_layers_{num_layers}_hidden_dim_{hidden}'
+                                  )
+    fold = get_fold_from_index(graph_idx=0)
+    sample_graph_data, graph_label = dataset[0]
+    model = get_model(model_type=model_type, hidden_dim=hidden, num_layers=num_layers,
+                      sample_graph_data=sample_graph_data)
+    # Let us load the weights of the pretrained model.
+    print(f"Loading model for fold {fold}")
+    print(model.load_state_dict(torch.load(os.path.join(checkpoint_dir, f"{model}_{fold}.pth"))))
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
     batch = torch.zeros(sample_graph_data.x.shape[0], dtype=int, device=sample_graph_data.x.device)
     sample_graph_data.batch = batch
@@ -192,4 +208,4 @@ def visualize_model():
 
 
 if __name__ == '__main__':
-    visualize_model()
+    explain_model_prediction()

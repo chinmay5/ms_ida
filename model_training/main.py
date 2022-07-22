@@ -55,12 +55,12 @@ def main():
         test_roc, test_roc_std = cross_validation_with_val_set(
             dataset=dataset,
             model_type=conv_name,
-            folds=10,
+            folds=5,
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr_decay_factor=args.lr_decay_factor,
             lr_decay_step_size=args.lr_decay_step_size,
-            weight_decay=1e-5,
+            weight_decay=0,
             logger=None,
             sample_graph_data=sample_graph_data,
             num_samples=num_samples

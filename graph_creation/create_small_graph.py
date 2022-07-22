@@ -28,13 +28,17 @@ def create_heterogeneous_dataset_and_visualize(all_scans_df):
     # To compute permutations, we would need to use the `index` of the dataframe.
     hetero_dataset = make_heterogeneous_dataset(all_scans_df)
     print(hetero_dataset)
-    visualize_heterogeneous_dataset(hetero_dataset, hetero_dataset.graph_metadata.scan_to_patients)
+    visualize_heterogeneous_and_homogeneous_dataset(hetero_dataset, hetero_dataset.graph_metadata.scan_to_patients)
 
 
-def visualize_heterogeneous_dataset(hetero_dataset, scan_to_patients, filename='small_viz'):
+def visualize_heterogeneous_and_homogeneous_dataset(hetero_dataset, scan_to_patients, filename='small_viz'):
     plot_heterogeneous_3d_graph(hetero_dataset=hetero_dataset, scan_to_patients=scan_to_patients,
                                 out_file=f'{filename}_hetero_graph.html')
     homogeneous_dataset = hetero_dataset.to_homogeneous()
+    visualize_homogeneous_dataset(filename, homogeneous_dataset, scan_to_patients)
+
+
+def visualize_homogeneous_dataset(filename, homogeneous_dataset, scan_to_patients):
     nx_graph = to_networkx_fail_safe(data=homogeneous_dataset)
     plot_3d_graph(edge_list=nx_graph.edges(), m_graph=nx_graph, scan_to_patients=scan_to_patients,
                   out_file=f'{filename}_graph.html')

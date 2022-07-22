@@ -61,6 +61,10 @@ class RunTimeConfigs(object):
 
 def drop_nodes(data):
     # We can drop 30% of the nodes at random.
-    node_mask = torch.rand(data.num_nodes) > 0.3
-    data = data.subgraph(node_mask)
-    return data
+    graph, label = data
+    node_mask = torch.rand(graph.num_nodes) > 0.3
+    # We do not prune when there are a very few nodes left.
+    if node_mask.sum() <=5:
+        return graph, label
+    sub_graph = graph.subgraph(node_mask)
+    return sub_graph, label

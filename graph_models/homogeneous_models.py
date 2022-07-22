@@ -1,10 +1,7 @@
-import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn import Sequential, Dropout
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import global_mean_pool, GCNConv, GATv2Conv, SAGEConv, GraphConv, global_max_pool, GINConv, \
-    JumpingKnowledge, global_add_pool, BatchNorm, SGConv
+from torch_geometric.nn import global_mean_pool, GCNConv, GATv2Conv, SAGEConv, GraphConv, SGConv
 from torch_geometric.utils import dropout_adj
 
 from dataset.PatientDataset import HomogeneousPatientDataset
@@ -17,23 +14,28 @@ class ParentHomogeneousGNN(nn.Module):
     All the children classes should define the self.convs() ModuleList.
     """
 
-    def __init__(self, hidden_dim, num_classes=2):
+    def __init__(self, node_feature_dim, hidden_dim, num_classes=2):
         super(ParentHomogeneousGNN, self).__init__()
         self.bns = None
         self.drs = None
         self.convs = None
         self.lin1 = nn.Linear(hidden_dim, hidden_dim // 2)
         self.lin2 = nn.Linear(hidden_dim // 2, num_classes)
+        # self.lin0 = nn.Sequential(
+        #     nn.Linear(node_feature_dim, node_feature_dim),
+        #     nn.ReLU()
+        # )
 
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
         self.lin1.reset_parameters()
         self.lin2.reset_parameters()
+        # self.lin0[0].reset_parameters()
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
-        x = self.lin0(x)
+        # x = self.lin0(x)
         edge_index, _ = dropout_adj(edge_index, p=0.5,
                                     force_undirected=False,
                                     num_nodes=data.num_nodes,
@@ -44,7 +46,6 @@ class ParentHomogeneousGNN(nn.Module):
                 x = self.bns[idx](x)
             if self.drs is not None:
                 x = self.drs[idx](x)
-        # x = global_add_pool(x, batch)
         x = global_mean_pool(x, batch)
         x = F.leaky_relu(self.lin1(x), negative_slope=0.2)
         x = F.dropout(x, p=0.5, training=self.training)
@@ -57,12 +58,9 @@ class ParentHomogeneousGNN(nn.Module):
 
 class GCNHomConv(ParentHomogeneousGNN):
     def __init__(self, hidden_dim, total_number_of_gnn_layers, node_feature_dim, num_classes=2):
-        super(GCNHomConv, self).__init__(hidden_dim=hidden_dim, num_classes=num_classes)
+        super(GCNHomConv, self).__init__(node_feature_dim=node_feature_dim, hidden_dim=hidden_dim,
+                                         num_classes=num_classes)
         convs = [GCNConv(in_channels=node_feature_dim, out_channels=hidden_dim)]
-        self.lin0 = nn.Sequential(
-            nn.Linear(node_feature_dim, node_feature_dim),
-            nn.ReLU()
-        )
         for _ in range(total_number_of_gnn_layers):
             convs.append(GCNConv(in_channels=hidden_dim, out_channels=hidden_dim))
         self.convs = nn.ModuleList(convs)
@@ -73,7 +71,8 @@ class GCNHomConv(ParentHomogeneousGNN):
 
 class GATHomConv(ParentHomogeneousGNN):
     def __init__(self, hidden_dim, total_number_of_gnn_layers, node_feature_dim, num_classes=2):
-        super(GATHomConv, self).__init__(hidden_dim=hidden_dim, num_classes=num_classes)
+        super(GATHomConv, self).__init__(node_feature_dim=node_feature_dim, hidden_dim=hidden_dim,
+                                         num_classes=num_classes)
         convs = [GATv2Conv(in_channels=node_feature_dim, out_channels=hidden_dim)]
         for _ in range(total_number_of_gnn_layers):
             convs.append(GCNConv(in_channels=hidden_dim, out_channels=hidden_dim))
@@ -85,12 +84,9 @@ class GATHomConv(ParentHomogeneousGNN):
 
 class SAGEHomConv(ParentHomogeneousGNN):
     def __init__(self, hidden_dim, total_number_of_gnn_layers, node_feature_dim, num_classes=2):
-        super(SAGEHomConv, self).__init__(hidden_dim=hidden_dim, num_classes=num_classes)
+        super(SAGEHomConv, self).__init__(node_feature_dim=node_feature_dim, hidden_dim=hidden_dim,
+                                          num_classes=num_classes)
         convs = [SAGEConv(in_channels=node_feature_dim, out_channels=hidden_dim)]
-        self.lin0 = nn.Sequential(
-            nn.Linear(node_feature_dim, node_feature_dim),
-            nn.ReLU()
-        )
         for _ in range(total_number_of_gnn_layers):
             convs.append(SAGEConv(in_channels=hidden_dim, out_channels=hidden_dim))
         self.convs = nn.ModuleList(convs)
@@ -101,7 +97,8 @@ class SAGEHomConv(ParentHomogeneousGNN):
 
 class GraphConvHomConv(ParentHomogeneousGNN):
     def __init__(self, hidden_dim, total_number_of_gnn_layers, node_feature_dim, num_classes=2):
-        super(GraphConvHomConv, self).__init__(hidden_dim=hidden_dim, num_classes=num_classes)
+        super(GraphConvHomConv, self).__init__(node_feature_dim=node_feature_dim, hidden_dim=hidden_dim,
+                                               num_classes=num_classes)
         convs = [GraphConv(in_channels=node_feature_dim, out_channels=hidden_dim)]
         for _ in range(total_number_of_gnn_layers):
             convs.append(GraphConv(in_channels=hidden_dim, out_channels=hidden_dim))
@@ -113,11 +110,8 @@ class GraphConvHomConv(ParentHomogeneousGNN):
 
 class SimpleConv(ParentHomogeneousGNN):
     def __init__(self, hidden_dim, total_number_of_gnn_layers, node_feature_dim, num_classes=2):
-        super(SimpleConv, self).__init__(hidden_dim=hidden_dim, num_classes=num_classes)
-        self.lin0 = nn.Sequential(
-            nn.Linear(node_feature_dim, node_feature_dim),
-            nn.ReLU()
-        )
+        super(SimpleConv, self).__init__(node_feature_dim=node_feature_dim, hidden_dim=hidden_dim,
+                                         num_classes=num_classes)
         convs = [SGConv(in_channels=node_feature_dim, out_channels=hidden_dim)]
         for _ in range(total_number_of_gnn_layers):
             convs.append(SGConv(in_channels=hidden_dim, out_channels=hidden_dim))
@@ -130,10 +124,10 @@ class SimpleConv(ParentHomogeneousGNN):
 class LinearModel(nn.Module):
     def __init__(self, hidden_dim, total_number_of_gnn_layers, node_feature_dim, num_classes=2):
         super(LinearModel, self).__init__()
-        self.lin0 = nn.Sequential(
-            nn.Linear(node_feature_dim, node_feature_dim),
-            nn.ReLU()
-        )
+        # self.lin0 = nn.Sequential(
+        #     nn.Linear(node_feature_dim, node_feature_dim),
+        #     nn.ReLU()
+        # )
         self.hidden_dim = hidden_dim
         mlp = [nn.Linear(node_feature_dim, hidden_dim)]
         for _ in range(total_number_of_gnn_layers):
@@ -144,7 +138,7 @@ class LinearModel(nn.Module):
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
-        x = self.lin0(x)
+        # x = self.lin0(x)
         for mlp in self.mlp_layers:
             x = F.relu(mlp(x))
         x = global_mean_pool(x, batch)
@@ -158,6 +152,7 @@ class LinearModel(nn.Module):
             mlp.reset_parameters()
         self.fc1.reset_parameters()
         self.fc2.reset_parameters()
+        # self.lin0[0].reset_parameters()
 
     def __repr__(self):
         return f"Linear model with {self.hidden_dim}"
@@ -166,6 +161,7 @@ class LinearModel(nn.Module):
 if __name__ == '__main__':
     gcn_conv = SimpleConv(hidden_dim=128, total_number_of_gnn_layers=4, node_feature_dim=768, num_classes=2)
     # gcn_conv = LinearModel(hidden_dim=128, total_number_of_gnn_layers=4, node_feature_dim=512, num_classes=2)
+    gcn_conv.reset_parameters()
     dataset = HomogeneousPatientDataset()
     dataloader = DataLoader(dataset, batch_size=4, shuffle=False)
     data, label = next(iter(dataloader))

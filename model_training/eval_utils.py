@@ -5,7 +5,7 @@ import pickle
 import torch
 from sklearn.metrics import roc_auc_score, confusion_matrix
 
-from environment_setup import get_configurations_dtype_int_list, get_configurations_dtype_int
+from environment_setup import get_configurations_dtype_int
 from utils.training_utils import LabelEncoder, CustomDictKey
 from utils.viz_utils import plot_bar_plot
 
@@ -19,7 +19,6 @@ graph_size_large = CustomDictKey(key_name=f"more than {smallness_threshold}", ke
 
 def eval_acc(model, loader):
     model.eval()
-
     correct = 0
     for data, labels in loader:
         data, labels = data.to(device), labels.to(device)
@@ -27,6 +26,22 @@ def eval_acc(model, loader):
             pred = model(data).max(1)[1]
         correct += pred.eq(labels.view(-1)).sum().item()
     return correct / len(loader.dataset)
+
+
+def eval_acc_with_confusion_matrix(model, loader):
+    model.eval()
+    outGT = torch.FloatTensor().to(device)
+    outPRED = torch.FloatTensor().to(device)
+    correct = 0
+    for data, labels in loader:
+        data, labels = data.to(device), labels.to(device)
+        with torch.no_grad():
+            pred = model(data).max(1)[1]
+        outPRED = torch.cat((outPRED, pred), 0)
+        outGT = torch.cat((outGT, labels), 0)
+        correct += pred.eq(labels.view(-1)).sum().item()
+    confusion_mat = compute_confusion_matrix(gt=outGT, predictions=outPRED, is_prediction=True)
+    return correct / len(loader.dataset), confusion_mat
 
 
 def eval_roc_auc(model, loader, enc, epoch=0, writer=None):
@@ -111,13 +126,17 @@ def _compute_roc_for_graph_size(predictions, gt, enc):
     return roc_auc_value
 
 
-def compute_confusion_matrix(gt, predictions):
-    predicted_label = predictions.max(1)[1]
+def compute_confusion_matrix(gt, predictions, is_prediction=False):
+    if not is_prediction:
+        predicted_label = predictions.max(1)[1]
+    else:
+        predicted_label = predictions
     gt, predicted_label = gt.cpu().numpy(), predicted_label.cpu().numpy()
     return confusion_matrix(gt, predicted_label)
 
 
-def plot_results_based_on_graph_size(size_cm_dict, filename_acc, filename_roc, model_type=None, output_dir=None):
+def plot_results_based_on_graph_size(size_cm_dict, filename_acc, filename_roc, model_type=None, output_dir=None, fold=0,
+                                     is_plotting_enabled=True):
     accuracy_dictionary, roc_dictionary, cm_dict = {}, {}, {}
     enc = LabelEncoder()
     for graph_size, model_predictions_list in size_cm_dict.items():
@@ -135,13 +154,33 @@ def plot_results_based_on_graph_size(size_cm_dict, filename_acc, filename_roc, m
             roc_dictionary[graph_size] = roc
         except ValueError:
             print(f"roc not defined since gt is {gt}")
-    plot_bar_plot(dictionary_to_plot=accuracy_dictionary, y_label='accuracy', title=f'{model_type} accuracy vs. size',
-                  filename=filename_acc, output_dir=output_dir)
-    plot_bar_plot(dictionary_to_plot=roc_dictionary, y_label='roc', title=f'{model_type} roc vs. size',
-                  filename=filename_roc, output_dir=output_dir, color='b')
+    if is_plotting_enabled:
+        plot_bar_plot(dictionary_to_plot=accuracy_dictionary, y_label='accuracy',
+                      title=f'{model_type} accuracy vs. size',
+                      filename=filename_acc, output_dir=output_dir)
+        plot_bar_plot(dictionary_to_plot=roc_dictionary, y_label='roc', title=f'{model_type} roc vs. size',
+                      filename=filename_roc, output_dir=output_dir, color='b')
     if output_dir is not None:
-        cm_save_path = os.path.join(output_dir, 'cm1.pkl')
+        cm_save_path = os.path.join(output_dir, f'cm{fold}.pkl')
         pickle.dump(cm_dict, open(cm_save_path, 'wb'))
+    return accuracy_dictionary, roc_dictionary
+
+
+def plot_avg_of_dictionary(input_dict, y_label, filename, output_dir, color):
+    """
+
+    :param input_dict: A dictionary with string key and a list of values to reduce
+    :param y_label: plot label
+    :param filename: filename to save the plot
+    :param output_dir: directory location for saving plots
+    :param color: color of bar plot
+    :return: None
+    """
+    avg_dict = {}
+    for key, item_list in input_dict.items():
+        avg_dict[key] = sum(item_list) / len(item_list)
+    plot_bar_plot(dictionary_to_plot=avg_dict, y_label=y_label, title=f'{filename} {y_label} vs. size',
+                  filename=filename, output_dir=output_dir, color=color)
 
 
 def compute_acc(gt, predictions):
