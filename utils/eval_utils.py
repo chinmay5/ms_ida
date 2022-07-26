@@ -136,15 +136,19 @@ def compute_confusion_matrix(gt, predictions, is_prediction=False):
 
 
 def plot_results_based_on_graph_size(size_cm_dict, filename_acc, filename_roc, model_type=None, output_dir=None, fold=0,
-                                     is_plotting_enabled=True):
+                                     is_plotting_enabled=True, split_acc_based_on_labels=False):
     accuracy_dictionary, roc_dictionary, cm_dict = {}, {}, {}
     enc = LabelEncoder()
     for graph_size, model_predictions_list in size_cm_dict.items():
         predictions, gt = torch.concat([x[0] for x in model_predictions_list]), torch.stack(
             [torch.as_tensor(x[1]) for x in model_predictions_list])
         gt = gt.to(predictions.device)
-        acc = compute_acc(gt, predictions)
-        accuracy_dictionary[graph_size] = acc
+        if split_acc_based_on_labels:
+            zero_acc, ones_acc = compute_label_wise_acc(gt, predictions)
+            accuracy_dictionary[graph_size] = (zero_acc, ones_acc)
+        else:
+            acc = compute_acc(gt, predictions)
+            accuracy_dictionary[graph_size] = acc
         cm = compute_confusion_matrix(gt, predictions)
         cm_dict[graph_size] = cm
         # ROC is not defined in case the gt is all 0s or all 1s.
@@ -187,3 +191,41 @@ def compute_acc(gt, predictions):
     predicted_label = predictions.max(1)[1]
     acc = predicted_label.eq(gt.view(-1)).sum().item() / predictions.shape[0]
     return acc
+
+
+def compute_label_wise_acc(gt, predictions):
+    zero_indices = torch.where(gt == 0)[0]
+    ones_indices = torch.where(gt == 1)[0]
+    predicted_label = predictions.max(1)[1]
+    zero_acc = predicted_label[zero_indices].eq(gt[zero_indices].view(-1)).sum().item() / zero_indices.shape[0]
+    ones_acc = predicted_label[ones_indices].eq(gt[ones_indices].view(-1)).sum().item() / ones_indices.shape[0]
+    return zero_acc, ones_acc
+
+
+def pretty_print_avg_dictionary(input_dict):
+    for key, values in input_dict.items():
+        print(f"{key}---------{sum(values) / len(values)}")
+
+
+def print_custom_avg_of_dictionary(input_dict):
+    """
+
+    :param input_dict: A dictionary with string key and a list of values to reduce
+    :param y_label: plot label
+    :param filename: filename to save the plot
+    :param output_dir: directory location for saving plots
+    :param color: color of bar plot
+    :return: None
+    """
+    # The input dictionary has
+    # {"large": [acc_lab0, acc_lab1]}
+    avg_dict = {}
+    for key, nested_list in input_dict.items():
+        list_zeros, list_ones = [], []
+        for x in nested_list:
+            list_zeros.append(x[0])
+            list_ones.append(x[1])
+        avg_dict[f"{key}_0"] = sum(list_zeros) / len(list_zeros)
+        avg_dict[f"{key}_1"] = sum(list_ones) / len(list_ones)
+    for key, value in avg_dict.items():
+        print(f"{key} has the accuracy {value}")

@@ -16,7 +16,7 @@ from torch_geometric.loader import DataLoader
 from dataset.dataset_factory import get_dataset
 from environment_setup import get_configurations_dtype_string, PROJECT_ROOT_DIR, get_configurations_dtype_boolean
 from graph_models.model_factory import get_model
-from model_training.eval_utils import eval_loss, eval_acc, eval_roc_auc, eval_graph_len_acc, \
+from utils.eval_utils import eval_loss, eval_acc, eval_roc_auc, eval_graph_len_acc, \
     plot_results_based_on_graph_size
 from utils.training_utils import LogWriterWrapper, LabelEncoder
 

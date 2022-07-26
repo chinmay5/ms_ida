@@ -14,7 +14,7 @@ from environment_setup import write_configs_to_disk, PROJECT_ROOT_DIR, \
 # This line is important for raytune.
 # It was unable to run properly in multiple-GPU setup
 from graph_models.model_factory import get_model
-from model_training.eval_utils import eval_loss, eval_roc_auc, eval_acc, eval_graph_len_acc, \
+from utils.eval_utils import eval_loss, eval_roc_auc, eval_acc, eval_graph_len_acc, \
     plot_results_based_on_graph_size
 from model_training.train_eval import train, k_fold
 from utils.training_utils import LabelEncoder, LogWriterWrapper, drop_nodes

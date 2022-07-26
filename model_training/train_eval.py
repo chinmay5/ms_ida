@@ -1,4 +1,3 @@
-import numpy as np
 import os
 import pickle
 import torch
@@ -15,7 +14,7 @@ from torch_geometric.loader import DataLoader
 
 from environment_setup import get_configurations_dtype_string, PROJECT_ROOT_DIR
 from graph_models.model_factory import get_model
-from model_training.eval_utils import eval_loss, eval_acc, eval_roc_auc
+from utils.eval_utils import eval_loss, eval_acc, eval_roc_auc
 from utils.training_utils import LogWriterWrapper, LabelEncoder
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

@@ -2,7 +2,7 @@ import torch
 
 from dataset.dataset_factory import get_dataset
 from graph_models.model_factory import get_model
-from model_training.eval_utils import eval_graph_len_acc, plot_results_based_on_graph_size
+from utils.eval_utils import eval_graph_len_acc, plot_results_based_on_graph_size
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

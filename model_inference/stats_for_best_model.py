@@ -1,3 +1,4 @@
+import pickle
 from collections import defaultdict
 
 import argparse
@@ -12,8 +13,9 @@ from environment_setup import write_configs_to_disk, PROJECT_ROOT_DIR, \
 # This line is important for raytune.
 # It was unable to run properly in multiple-GPU setup
 from graph_models.model_factory import get_model
-from model_training.eval_utils import eval_roc_auc, eval_acc, eval_graph_len_acc, \
-    plot_results_based_on_graph_size, eval_acc_with_confusion_matrix, plot_avg_of_dictionary
+from utils.eval_utils import eval_roc_auc, eval_graph_len_acc, \
+    plot_results_based_on_graph_size, eval_acc_with_confusion_matrix, plot_avg_of_dictionary, \
+    print_custom_avg_of_dictionary, pretty_print_avg_dictionary
 from model_training.train_eval import k_fold
 from utils.training_utils import LabelEncoder
 
@@ -30,15 +32,8 @@ parser.add_argument('--lr_decay_step_size', type=int, default=400)
 args = parser.parse_args()
 
 
-def logger(info):
-    fold, epoch = info['fold'] + 1, info['epoch']
-    val_loss, test_acc = info['val_loss'], info['test_acc']
-    print(f'{fold:02d}/{epoch:03d}: Val Loss: {val_loss:.4f}, '
-          f'Test Accuracy: {test_acc:.3f}')
-
-
 def stats_for_each_split(dataset, model, folds, batch_size,
-                         logger, device, checkpoint_dir):
+                         split_acc_based_on_labels, device, checkpoint_dir):
     test_roc_auc, test_accuracy, test_cm_list = [], [], []
     acc_dict_avg, roc_dict_avg = defaultdict(list), defaultdict(list)
     for fold, (_, _, test_idx) in enumerate(zip(*k_fold(dataset, folds))):
@@ -68,8 +63,11 @@ def stats_for_each_split(dataset, model, folds, batch_size,
         print(f"Test accuracy {test_accuracy[-1]} and Test ROC {test_roc_auc[-1]}")
         test_acc, size_cm_dict = eval_graph_len_acc(model, test_loader.dataset)
         assert test_acc == test_accuracy[-1], f"Value differs as {test_acc} vs. {test_accuracy[-1]}"
-        acc_dict, roc_dict = plot_results_based_on_graph_size(size_cm_dict, output_dir=test_images_dir, filename_acc=f'acc_{fold}',
-                                         filename_roc=f'roc_{fold}', model_type=model, fold=fold, is_plotting_enabled=False)
+        acc_dict, roc_dict = plot_results_based_on_graph_size(size_cm_dict, output_dir=test_images_dir,
+                                                              filename_acc=f'acc_{fold}',
+                                                              filename_roc=f'roc_{fold}', model_type=model, fold=fold,
+                                                              is_plotting_enabled=False,
+                                                              split_acc_based_on_labels=split_acc_based_on_labels)
         # Let us add the values to our final dictionary so that we can average it
         for key, _ in acc_dict.items():
             acc_dict_avg[key].append(acc_dict[key])
@@ -86,12 +84,33 @@ def stats_for_each_split(dataset, model, folds, batch_size,
     final_cm = np.sum(test_cm_list, axis=0)
     print(final_cm)
     # Let us plot the final dictionary
-    plot_avg_of_dictionary(input_dict=roc_dict_avg, y_label='roc', filename=f'{model}_roc_avg_all_folds', output_dir=test_images_dir, color='r')
-    plot_avg_of_dictionary(input_dict=acc_dict_avg, y_label='acc', filename=f'{model}_acc_avg_all_folds', output_dir=test_images_dir, color='r')
+    plot_avg_of_dictionary(input_dict=roc_dict_avg, y_label='roc', filename=f'{model}_roc_avg_all_folds',
+                           output_dir=test_images_dir, color='c')
+    pretty_print_avg_dictionary(input_dict=roc_dict_avg)
+    if split_acc_based_on_labels:
+        print_custom_avg_of_dictionary(input_dict=acc_dict_avg)
+    else:
+        plot_avg_of_dictionary(input_dict=acc_dict_avg, y_label='acc', filename=f'{model}_acc_avg_all_folds',
+                               output_dir=test_images_dir, color='c')
     return test_roc_auc_mean, test_roc_auc_std, test_accuracy_mean, test_accuracy_std
 
 
-def main(checkpoint_dir, model_type, hidden, num_layers):
+def evaluate_cm(dataset, folds):
+    base_log_dir = os.path.join(PROJECT_ROOT_DIR,
+                                get_configurations_dtype_string(section='TRAINING', key='LOG_DIR'))
+    test_images_dir = os.path.join(base_log_dir, 'final_test_images')
+    cm_results_dict = defaultdict(lambda:np.zeros((2, 2)))
+    for fold, (_, _, test_idx) in enumerate(zip(*k_fold(dataset, folds))):
+        cm_save_path = os.path.join(test_images_dir, f'cm{fold}.pkl')
+        cm_dict = pickle.load(open(cm_save_path, 'rb'))
+        for key, cm in cm_dict.items():
+            cm_results_dict[key] += cm
+    # Finally, printing our eventual results
+    for key, cm in cm_results_dict.items():
+        print(f"{key} has \n {cm}")
+
+
+def main(checkpoint_dir, model_type, hidden, num_layers, split_acc_based_on_labels, report_cm):
     seed_everything(seed=42)
     dataset = get_dataset()
     # Write configurations to the disk
@@ -112,21 +131,24 @@ def main(checkpoint_dir, model_type, hidden, num_layers):
         model=model,
         folds=num_folds,
         batch_size=args.batch_size,
-        logger=None,
+        split_acc_based_on_labels=split_acc_based_on_labels,
         device=device,
         checkpoint_dir=checkpoint_dir,
     )
     desc = f'{roc:.3f} ± {std:.3f} and accuracy {acc:.3f} ± {acc_std:.3f}'
     print(f'{model}; Hidden:{hidden}, Layers:{num_layers}: {desc}')
+    if report_cm:
+        evaluate_cm(dataset=dataset, folds=num_folds)
 
 
 if __name__ == '__main__':
     hidden = 256
     num_layers = 2
-    model_type = 'gat'
+    model_type = 'sage'
     checkpoint_dir = os.path.join(PROJECT_ROOT_DIR,
                                   get_configurations_dtype_string(section='TRAINING', key='LOG_DIR'),
                                   f'_layers_{num_layers}_hidden_dim_{hidden}'
                                   )
 
-    main(checkpoint_dir=checkpoint_dir, model_type=model_type, hidden=hidden, num_layers=num_layers)
+    main(checkpoint_dir=checkpoint_dir, model_type=model_type, hidden=hidden, num_layers=num_layers,
+         split_acc_based_on_labels=True, report_cm=False)
