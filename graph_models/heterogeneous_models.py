@@ -45,13 +45,13 @@ class GCNHetConv(ParentHeterogeneousGNN):
         convs = [HeteroConv({
             key: GCNConv(in_channels=node_feature_dim, out_channels=hidden_dim) for key in
             hetero_dataset_sample.edge_index_dict.keys()
-        }, aggr='sum')]
+        }, aggr='max')]
         # Now, how are we going to generate all these heterogeneous conv layers?
         for _ in range(total_number_of_gnn_layers - 1):
             convs.append(HeteroConv({
                 key: GCNConv(in_channels=hidden_dim, out_channels=hidden_dim) for key in
                 hetero_dataset_sample.edge_index_dict.keys()
-            }, aggr='sum'))
+            }, aggr='max'))
         self.convs = nn.ModuleList(convs)
 
     def __repr__(self):
@@ -64,13 +64,13 @@ class GATHetConv(ParentHeterogeneousGNN):
         convs = [HeteroConv({
             key: GATv2Conv(in_channels=node_feature_dim, out_channels=hidden_dim) for key in
             hetero_dataset_sample.edge_index_dict.keys()
-        }, aggr='sum')]
+        }, aggr='max')]
         # Now, how are we going to generate all these heterogeneous conv layers?
         for _ in range(total_number_of_gnn_layers - 1):
             convs.append(HeteroConv({
                 key: GATv2Conv(in_channels=hidden_dim, out_channels=hidden_dim) for key in
                 hetero_dataset_sample.edge_index_dict.keys()
-            }, aggr='sum'))
+            }, aggr='max'))
         self.convs = nn.ModuleList(convs)
 
     def __repr__(self):
@@ -83,13 +83,13 @@ class SAGEHetConv(ParentHeterogeneousGNN):
         convs = [HeteroConv({
             key: SAGEConv(in_channels=node_feature_dim, out_channels=hidden_dim) for key in
             hetero_dataset_sample.edge_index_dict.keys()
-        }, aggr='sum')]
+        }, aggr='max')]
         # Now, how are we going to generate all these heterogeneous conv layers?
         for _ in range(total_number_of_gnn_layers - 1):
             convs.append(HeteroConv({
                 key: SAGEConv(in_channels=hidden_dim, out_channels=hidden_dim) for key in
                 hetero_dataset_sample.edge_index_dict.keys()
-            }, aggr='sum'))
+            }, aggr='max'))
         self.convs = nn.ModuleList(convs)
 
     def __repr__(self):
@@ -102,13 +102,13 @@ class GraphConvHetConv(ParentHeterogeneousGNN):
         convs = [HeteroConv({
             key: GraphConv(in_channels=node_feature_dim, out_channels=hidden_dim) for key in
             hetero_dataset_sample.edge_index_dict.keys()
-        }, aggr='sum')]
+        }, aggr='max')]
         # Now, how are we going to generate all these heterogeneous conv layers?
         for _ in range(total_number_of_gnn_layers - 1):
             convs.append(HeteroConv({
                 key: GraphConv(in_channels=hidden_dim, out_channels=hidden_dim) for key in
                 hetero_dataset_sample.edge_index_dict.keys()
-            }, aggr='sum'))
+            }, aggr='max'))
         self.convs = nn.ModuleList(convs)
 
     def __repr__(self):

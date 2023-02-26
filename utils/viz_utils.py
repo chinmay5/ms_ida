@@ -22,7 +22,7 @@ os.makedirs(viz_save_path, exist_ok=True)
 def plot_heterogeneous_3d_graph(hetero_dataset, scan_to_patients, out_file):
     # We can iterate over the different edge types in our dataset and then generate plots for them
     nodes = hetero_dataset.x_dict['lesion']
-    lesion_location = [patient_info[5] for scan_name, patient_info in scan_to_patients.items()]
+    lesion_location = [(patient_info[8], patient_info[2]) for scan_name, patient_info in scan_to_patients.items()]
     edge_colors = ['black', 'blue']
     edge_widhts = [0.05, 2.5]
     G = nx.Graph()
@@ -51,7 +51,7 @@ def get_plot_title(scan_to_patients):
 def plot_3d_graph(edge_list, m_graph, scan_to_patients, out_file='sample.html', node_display_info='markers', size=10):
     # We use lesion locations as index.
     # This is useful when we are working with the smaller dataframe of a single patient
-    node_labels = [patient_info[5] for scan_name, patient_info in scan_to_patients.items()]
+    node_labels = [(patient_info[8], patient_info[2]) for scan_name, patient_info in scan_to_patients.items()]
     patient_name = get_plot_title(scan_to_patients=scan_to_patients)
     x_edges, x_nodes, y_edges, y_nodes, z_edges, z_nodes = spring_layout(edge_list, m_graph)
     trace_edges = create_edge_trace(x_edges, y_edges, z_edges)
@@ -95,7 +95,7 @@ def create_node_trace(node_display_info, node_labels, size, x_nodes, y_nodes, z_
                                    "size": size,
                                    "family": "Sans-serif"
                                },
-                               marker=dict(color=[20*x for x in node_labels]),
+                               marker=dict(color=[20*x[0] for x in node_labels]),
                                text=node_labels,
                                hoverinfo='text')
     return trace_nodes

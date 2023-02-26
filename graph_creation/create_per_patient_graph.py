@@ -10,15 +10,18 @@ from graph_creation.graph_creation_utils import add_knn_nodes_to_df, make_hetero
 
 def split_graph_based_on_patients():
     csv_path = get_configurations_dtype_string(section='SETUP', key='RAW_METADATA_CSV')
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, comment='#')
     patient_csv_root_folder = get_configurations_dtype_string(section='SETUP', key='PATIENT_CSV_ROOT_FOLDER')
+    if os.path.exists(patient_csv_root_folder):
+        print("Patient csv root folder exists. Reusing it!!!!!")
+        return
     os.makedirs(patient_csv_root_folder, exist_ok=True)
     group_index_dict = df.groupby(by='Patient').indices
     for patient, csv_row_indices in group_index_dict.items():
         patient_df = copy.deepcopy(df.loc[csv_row_indices])
         # Finally, we would go ahead and save this patient info in a csv file
         patient_df.to_csv(os.path.join(patient_csv_root_folder, f"{patient}.csv"), index=False)
-    print("Small subset for patient 782 created")
+    print(f"Per patient csv files created by splitting {csv_path}")
 
 
 def create_heterogeneous_graphs_for_one_patient(patient_df, patient_name, hetero_dataset_save_folder):
@@ -67,11 +70,12 @@ def test_graph_creation_for_one_patient(patient_name='m819631'):
     # Let us also plot this graph
     hetero_dataset_save_path = os.path.join(temp_dataset_folder, f'{patient_name}.pt')
     hetero_dataset = torch.load(hetero_dataset_save_path)
-    visualize_heterogeneous_and_homogeneous_dataset(hetero_dataset, hetero_dataset.scan_to_patients, filename=patient_name)
+    visualize_heterogeneous_and_homogeneous_dataset(hetero_dataset, hetero_dataset.scan_to_patients,
+                                                    filename=patient_name)
 
 
 if __name__ == '__main__':
-    # split_graph_based_on_patients()
+    split_graph_based_on_patients()
     create_heterogeneous_graphs_for_all_patients()
     # sanitize_error_patients(patients_with_graph_formation_error=patients_with_graph_formation_error)
     # test_graph_creation_for_one_patient()

@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 from torch_geometric.utils import to_networkx
 
@@ -10,6 +12,8 @@ def create_subset_for_patient_782():
     csv_path = get_configurations_dtype_string(section='SETUP', key='RAW_METADATA_CSV')
     df = pd.read_csv(csv_path)
     subset_782_csv_path = get_configurations_dtype_string(section='SETUP', key='RAW_METADATA_CSV_PATIENT_782')
+    subset_782_parent_folder = subset_782_csv_path[:subset_782_csv_path.rfind("/")]
+    os.makedirs(subset_782_parent_folder, exist_ok=True)
     df.iloc[:46, ].to_csv(subset_782_csv_path, index=False)
     print("Small subset for patient 782 created")
 
@@ -22,6 +26,7 @@ def add_nearest_neighbours_and_save_df(df, k=10):
     subset_782_csv_with_nn_path = get_configurations_dtype_string(section='SETUP',
                                                                   key='RAW_METADATA_CSV_PATIENT_782_WITH_NN_CSV')
     df.to_csv(subset_782_csv_with_nn_path, index=False)
+    return df
 
 
 def create_heterogeneous_dataset_and_visualize(all_scans_df):
@@ -48,5 +53,6 @@ if __name__ == '__main__':
     create_subset_for_patient_782()
     subset_782_csv = pd.read_csv(get_configurations_dtype_string(section='SETUP', key='RAW_METADATA_CSV_PATIENT_782'))
     # We need to run this code block only when we want to update the original CSV with more neighbours.
-    # add_nearest_neighbours(df=subset_782_csv, k=num_neighbours)
-    create_heterogeneous_dataset_and_visualize(all_scans_df=subset_782_csv)
+    num_neighbours = get_configurations_dtype_int(section='SETUP', key='NUM_NEIGHBOURS')
+    df_with_nearest_neighbour = add_nearest_neighbours_and_save_df(df=subset_782_csv, k=num_neighbours)
+    create_heterogeneous_dataset_and_visualize(all_scans_df=df_with_nearest_neighbour)

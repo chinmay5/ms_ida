@@ -16,11 +16,11 @@ from dataset.dataset_factory import get_dataset
 from model_training.train_eval import cross_validation_with_val_set
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--batch_size', type=int, default=128)
-parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--epochs', type=int, default=500)
+parser.add_argument('--batch_size', type=int, default=8)
+parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--lr_decay_factor', type=float, default=0.5)
-parser.add_argument('--lr_decay_step_size', type=int, default=400)
+parser.add_argument('--lr_decay_step_size', type=int, default=150)
 args = parser.parse_args()
 
 
@@ -52,10 +52,10 @@ def main():
     print(f"Is cuda available: {torch.cuda.is_available()}")
     print(ray.cluster_resources())
     for conv_name in conv_names:
-        test_roc, test_roc_std = cross_validation_with_val_set(
+        loss, roc, roc_std, acc, acc_std, regr, regr_std = cross_validation_with_val_set(
             dataset=dataset,
             model_type=conv_name,
-            folds=5,
+            folds=10,
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr_decay_factor=args.lr_decay_factor,
@@ -65,8 +65,8 @@ def main():
             sample_graph_data=sample_graph_data,
             num_samples=num_samples
         )
-        print(f"Final performance {test_roc} with stddev {test_roc_std}")
-        method_dict[conv_name] = (test_roc, test_roc_std)
+        desc = f'{roc:.3f} ± {roc_std:.3f}, accuracy {acc:.3f} ± {acc_std:.3f} and regr {regr:.3f} ± {regr_std:.3f}'
+        method_dict[conv_name] = desc
     for key, value in method_dict.items():
         print(f"{key} has {value}")
     print(f"time taken is {(time.time() - start_time)/3600} hours")
