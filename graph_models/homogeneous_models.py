@@ -139,45 +139,6 @@ def deterministic_global_mean_pool_non_zero(x, batch=None):
     return segment_csr(x, batch, reduce='mean')
 
 
-# Shameless copy of Karpathy's code
-class AttentionHead(nn.Module):
-    def __init__(self, input_dim):
-        super(AttentionHead, self).__init__()
-        self.projection_head = nn.Linear(input_dim, 3 * input_dim)
-        self.embed_dim = input_dim
-        self.attn_dropout = nn.Dropout()
-        self.n_head = 1
-
-    def forward(self, x, batch):
-        # We need to make sure that the graphs do not end up interferring
-        # with each other while computing attention masks
-        x, mask = to_dense_batch(x, batch)
-        # We use gumble softmax to generate discrete samples.
-
-        B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.projection_head(x).split(self.embed_dim, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
-
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        # What if we mask out regions where no attention should be applied
-        # Using float('-inf) may lead to NaN in softmax operation.
-        _MASKING_VALUE = -1e+30 if att.dtype == torch.float32 else -1e+4
-        att = att.masked_fill(mask.unsqueeze(1).unsqueeze(-1) == 0, _MASKING_VALUE)
-        # att = att - att.max(dim=-2)[0]
-        att = F.softmax(att, dim=-1)
-        att = self.attn_dropout(att)
-        y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
-        return y[mask]
-
-    def reset_parameters(self):
-        self.projection_head.reset_parameters()
-
-
 class SimpleAggr(nn.Module):
     def __init__(self, feat_dim, is_hard_masking):
         super(SimpleAggr, self).__init__()
