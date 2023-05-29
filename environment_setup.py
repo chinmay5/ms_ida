@@ -3,15 +3,16 @@ import torch
 from configparser import ConfigParser
 
 PROJECT_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-default_config_file = 'config_debug.ini'
+default_config_file = 'config_1_y.ini'
 new_config_File = input(f"Enter the config file name for execution. Default is {default_config_file} ->").strip()
 # new_config_File = ""
-# new_config_File = "config_debug.ini"
+# new_config_File = "config_1_y.ini"
 config_file = new_config_File if len(new_config_File) > 0 else default_config_file
 assert config_file in os.listdir(os.path.join(PROJECT_ROOT_DIR, 'config_files')), f"{config_file} does not exist"
 
 # Check if cuda available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class ConfigReaderSingleton(object):
 
@@ -34,30 +35,30 @@ class ConfigReaderSingleton(object):
 parser = ConfigReaderSingleton().get_instance()
 
 
-def get_configurations_dtype_string(section, key, default_value=None):
-    return parser[section].get(key, fallback=default_value)
+def get_configurations_dtype_string(section, key):
+    return parser[section].get(key)
 
 
-def get_configurations_dtype_int(section, key, default_value=None):
-    return parser[section].getint(key, fallback=default_value)
+def get_configurations_dtype_int(section, key):
+    return parser[section].getint(key)
 
 
-def get_configurations_dtype_float(section, key, default_value=None):
-    return parser[section].getfloat(key, fallback=default_value)
+def get_configurations_dtype_float(section, key):
+    return parser[section].getfloat(key)
 
 
-def get_configurations_dtype_boolean(section, key, default_value=None):
-    return parser[section].getboolean(key, fallback=default_value)
+def get_configurations_dtype_boolean(section, key):
+    return parser[section].getboolean(key)
 
 
-def get_configurations_dtype_string_list(section, key, default_value=None):
-    comma_separated_list = parser[section].get(key, fallback=default_value)
+def get_configurations_dtype_string_list(section, key):
+    comma_separated_list = parser[section].get(key)
     list_elements = comma_separated_list.split(",")
     return [x.strip() for x in list_elements]
 
 
-def get_configurations_dtype_int_list(section, key, default_value=None):
-    comma_separated_list = parser[section].get(key, fallback=default_value)
+def get_configurations_dtype_int_list(section, key):
+    comma_separated_list = parser[section].get(key)
     list_elements = comma_separated_list.split(",")
     return [int(x.strip()) for x in list_elements]
 

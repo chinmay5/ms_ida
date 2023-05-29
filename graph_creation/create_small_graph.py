@@ -1,7 +1,6 @@
 import os
 
 import pandas as pd
-from torch_geometric.utils import to_networkx
 
 from environment_setup import get_configurations_dtype_string, get_configurations_dtype_int
 from graph_creation.graph_creation_utils import add_knn_nodes_to_df, make_heterogeneous_dataset

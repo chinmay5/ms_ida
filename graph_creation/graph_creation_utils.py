@@ -14,14 +14,29 @@ from utils.training_utils import normalize_features
 print(
     "WARNING!!!!!\n A change had to be made to ignore the last scan.\n This happened because the new csv does not "
     "contain the last scan.\nPlease remove this code block as soon as the csv issue is resolved.")
-ssl_radiomic_features = np.load(get_configurations_dtype_string(section='SETUP', key='SSL_FEATURES_NUMPY_PATH'))
-# radiomic_features = np.load(get_configurations_dtype_string(section='SETUP', key='RADIOMIC_FEATURES_NUMPY_PATH'))
+ssl_features = np.load(get_configurations_dtype_string(section='SETUP', key='SSL_FEATURES_NUMPY_PATH'))
+radiomic_features = np.load(get_configurations_dtype_string(section='SETUP', key='RADIOMIC_FEATURES_NUMPY_PATH'))
 # TODO: Remve this ASAP
-ssl_radiomic_features = ssl_radiomic_features[:-1, :]
-# ssl_radiomic_features, radiomic_features = ssl_radiomic_features[:-1, :], radiomic_features[:-1, :]
-# concatenated_features = np.concatenate((radiomic_features, ssl_radiomic_features), axis=1)
-#
-# normalize_features(concatenated_features)
+ssl_features = ssl_features[:-1, :]
+
+radiomic_features = radiomic_features[:-1, :]
+
+
+# We need to normalize the radiomic features before concatenating them to the SSL features.
+def z_score_normalize(vector):
+    vector -= np.mean(vector)
+    vector = vector / (2 * np.std(vector) + 0.001)
+    return vector
+
+
+def normalize_features_z(features):
+    for ii in range(np.shape(features)[1]):
+        features[:, ii] = z_score_normalize(features[:, ii])
+
+
+# Let us normalize the features using z-score normalization.
+normalize_features_z(radiomic_features)
+concatenated_features = np.concatenate((ssl_features, radiomic_features), axis=1)
 
 
 class GraphMetadata(object):
@@ -102,7 +117,7 @@ def to_pyg_dataset(edge_index, edge_attr, scan_to_patients):
     for _, metadata_values in scan_to_patients.items():
         global_lesion_indices_for_small_graph_nodes.append(metadata_values[1])
     # We have the indices and now we can get the node features
-    x = torch.as_tensor(ssl_radiomic_features, dtype=torch.float)
+    x = torch.as_tensor(ssl_features, dtype=torch.float)
     # Using concatenation of radiomic and SSL features
     # x = torch.as_tensor(concatenated_features, dtype=torch.float)
     add_if_enhancing_tumor_as_feature = get_configurations_dtype_boolean(section='SETUP',
@@ -188,9 +203,10 @@ def compute_edges(all_possible_permutations, all_scans_df_with_NN, df_to_scan_in
     edge_type_idx = 0
     if get_configurations_dtype_boolean(section='SETUP', key='CREATE_LESION_EDGES'):
         print("Creating lesion edges")
-        edge_type_idx = include_lesion_location_edges(all_possible_permutations, all_scans_df_with_NN, df_to_scan_index, edge_index,
-                                      edge_type, edge_attr,
-                                      edge_type_names_dict)
+        edge_type_idx = include_lesion_location_edges(all_possible_permutations, all_scans_df_with_NN, df_to_scan_index,
+                                                      edge_index,
+                                                      edge_type, edge_attr,
+                                                      edge_type_names_dict)
     if get_configurations_dtype_boolean(section='SETUP', key='CREATE_KNN_EDGES'):
         print("Creating KNN edges")
         # Now, we would select the second kind of edges based on the Nearest Neighbours.

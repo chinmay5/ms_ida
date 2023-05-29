@@ -10,12 +10,9 @@ from sklearn import svm
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.metrics import roc_auc_score
-from tqdm import tqdm
 
-from dataset.NodeLevelPatientDataset import KNNNodeLevelPatientDataset
-from dataset.PatientDataset import KNNPatientDataset
 from dataset.dataset_factory import get_dataset
-from environment_setup import get_configurations_dtype_string, get_configurations_dtype_boolean, PROJECT_ROOT_DIR
+from environment_setup import get_configurations_dtype_string, PROJECT_ROOT_DIR
 from utils.training_utils import plot_avg_of_dictionary, print_custom_avg_of_dictionary, pretty_print_avg_dictionary, \
     decide_graph_category_based_on_size, k_fold, normalize_features
 
@@ -53,7 +50,8 @@ def prepare_dataset():
     for idx in range(len(dataset)):
         graph_orig, _, label = dataset[idx]
         # Average across all nodes to generate a single feature
-        all_features.append(torch.mean(graph_orig.x, dim=0).numpy())
+        # all_features.append(torch.mean(graph_orig.x, dim=0).numpy())
+        all_features.append(torch.sum(graph_orig.x, dim=0).numpy())
         all_labels.append(label)
         all_graph_categ.append(decide_graph_category_based_on_size(graph_orig.x.size(0)))
         all_regr_target.append(graph_orig.graph_vol)
@@ -201,7 +199,7 @@ def train_regression_model(numpy_features, numpy_labels, is_logistic_regr=True):
 if __name__ == '__main__':
     numpy_features, numpy_labels, numpy_graph_categ, numpy_regr_labels = prepare_dataset()
     # We are already normalizing features while creating the dataset.
-    # normalize_features(features=numpy_features)
+    normalize_features(features=numpy_features)
     # for solver in ['lbfgs', 'newton-cg', 'liblinear', 'saga']:
     for model_type in ['rf', 'svm', 'lr']:
         roc, roc_std, acc, acc_std = train_classification_model(numpy_features=numpy_features,

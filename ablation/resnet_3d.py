@@ -147,7 +147,8 @@ class ResNet(nn.Module):
                                        stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-        self.fc = nn.Linear(block_inplanes[3] * block.expansion, n_classes)
+        self.fc1 = nn.Linear(block_inplanes[3] * block.expansion, n_classes)
+        self.regr = nn.Linear(block_inplanes[3] * block.expansion, 1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -208,9 +209,10 @@ class ResNet(nn.Module):
         x = self.avgpool(x)
 
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
-
-        return x
+        clf = self.fc1(x)
+        regr_out = self.regr(x)
+        regr_out = torch.log(1 + torch.exp(regr_out - regr_out.max())) + regr_out.max()
+        return clf, regr_out
 
 
 def generate_model(model_depth, **kwargs):
@@ -238,5 +240,5 @@ if __name__ == '__main__':
     model = generate_model(model_depth=10, n_classes=2, n_input_channels=1)
     # print(model)
     x = torch.randn(2, 1, 144, 144, 144)
-    print(model(x).shape)
+    print(model(x)[0].shape)
     model.apply(weight_reset)

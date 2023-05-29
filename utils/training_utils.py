@@ -1,22 +1,19 @@
+import os
+import pickle
 import random
 from collections import defaultdict
 
 import numpy as np
-import os
-import pickle
 import torch
-from sklearn.metrics import roc_auc_score, confusion_matrix, balanced_accuracy_score
+from sklearn.metrics import roc_auc_score, confusion_matrix, precision_score, recall_score, f1_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import OneHotEncoder
 from torch import nn
-from torch.optim import Adam
 from torch.utils.data import WeightedRandomSampler
-from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
-from environment_setup import PROJECT_ROOT_DIR, get_configurations_dtype_boolean, get_configurations_dtype_float, \
-    device, get_configurations_dtype_string, get_configurations_dtype_int
-from utils.sup_contras_loss import SupConLoss
+from environment_setup import PROJECT_ROOT_DIR, get_configurations_dtype_boolean, device, \
+    get_configurations_dtype_string, get_configurations_dtype_int
 from utils.viz_utils import plot_bar_plot
 
 smallness_threshold = get_configurations_dtype_int(section='SETUP', key='DIFF_GRAPH_THRESHOLD')
@@ -100,120 +97,6 @@ def drop_nodes(graph):
     return sub_graph
 
 
-def shuffle_dataset(loader, dataset_refresh_metadata, mixup_train_loader=None):
-    graph_dataset, train_idx = dataset_refresh_metadata
-    train_with_more_augmentations = [(graph_dataset[idx.item()][1], graph_dataset[idx.item()][2]) for idx in train_idx]
-    vars(loader)['dataset'] = train_with_more_augmentations
-    if mixup_train_loader is not None:
-        # We have to update the training dataset.
-        # Forgetting it leads to mixup getting applied only on the original samples and not augmented ones.
-        vars(mixup_train_loader)['dataset'] = train_with_more_augmentations
-
-
-class MixupTrainer(object):
-    def __init__(self, gnn_model, criterion, optimizer, regr_criterion, train_writer):
-        super(MixupTrainer, self).__init__()
-        self.gnn_model = gnn_model
-        # Idea: Since we would do a mixup on two dataloaders, with more weight to the instance based version,
-        # we would expect an intrinsic un-balanced nature that we need to account for.
-        self.criterion = criterion
-        # A hacky solution to get the same lr and weight decay terms
-        # self.optim = torch.optim.Adam(
-        #     chain(self.gnn_model.lin2.parameters(), self.gnn_model.lin_new_lesion_regr.parameters()))
-        self.optim = optimizer
-        # self.optim.defaults = optimizer.defaults
-        self.regr_criterion = regr_criterion
-        self.train_writer = train_writer
-
-    def run_through_gnn(self, graph, graph2):
-        # with torch.no_grad():
-        out1 = self.gnn_model(graph)
-        h1 = self.gnn_model.graph_level_feat
-        out2 = self.gnn_model(graph2)
-        h2 = self.gnn_model.graph_level_feat
-        mixed_features, lam = self.mixup_data(graph_features1=h1, graph_features2=h2)
-        # Now we compute loss only on the classification layer
-        prediction = self.gnn_model.lin2(mixed_features)
-        vol_pred = self.gnn_model.lin_new_lesion_regr(mixed_features).squeeze(-1)
-        return prediction, vol_pred, lam, out1['node_vol'], out2['node_vol'], h1, h2
-
-    def mixup_data(self, graph_features1, graph_features2, alpha=4):
-        '''Returns mixed inputs, pairs of targets, and lambda'''
-        if alpha > 0:
-            lam = np.random.beta(alpha, alpha)
-        else:
-            lam = 1
-        mixed_features = lam * graph_features1 + (1 - lam) * graph_features2
-        return mixed_features, lam
-
-    def mixup_criterion(self, pred, y_a, y_b, lam):
-        return lam * self.criterion(pred, y_a) + (1 - lam) * self.criterion(pred, y_b)
-
-    def mixup_regr_criterion(self, pred, y_a, y_b, lam):
-        return lam * self.regr_criterion(pred, y_a) + (1 - lam) * self.regr_criterion(pred, y_b)
-
-    def run_mixup_training(self, graph, idx, label, graph2, label2, criterion_vol_regr, scheduler):
-        class_pred, vol_pred, lam, node_vol_1, node_vol_2, feat1, feat2 = self.run_through_gnn(graph=graph,
-                                                                                               graph2=graph2)
-        cls_loss = self.mixup_criterion(pred=class_pred, y_a=label.squeeze(), y_b=label2.squeeze(), lam=lam)
-        regr_loss = self.mixup_regr_criterion(pred=vol_pred, y_a=graph.graph_vol, y_b=graph2.graph_vol, lam=lam)
-        # Let us also add in the lesion volume loss
-        node_regr_loss = criterion_vol_regr(node_vol_1, graph.node_labels) + criterion_vol_regr(node_vol_2,
-                                                                                                graph2.node_labels)
-        loss = cls_loss + regr_loss + node_regr_loss
-        self.optim.zero_grad()
-        loss.backward()
-        self.optim.step()
-        if scheduler is not None:
-            scheduler.step()
-        self.train_writer.add_scalar('mixup_cls_loss', cls_loss.item(), global_step=idx)
-        self.train_writer.add_scalar('mixup_regr_loss', regr_loss.item(), global_step=idx)
-        self.train_writer.add_scalar('loss', loss.item(), global_step=idx)
-        # Since we are computing the regression loss for two graphs, dividing by 2 while plotting.
-        self.train_writer.add_scalar('vol_regr_loss', node_regr_loss.item() / 2, global_step=idx)
-
-
-class ContrastiveTrainer(object):
-    def __init__(self):
-        super(ContrastiveTrainer, self).__init__()
-        self.contras_loss = SupConLoss()
-        self.balanced_criterion = nn.CrossEntropyLoss()
-
-    def execute_contras_training(self, criterion_vol_regr, data, epoch, idx, label, loader, model, optimizer,
-                                 total_loss, train_writer, scheduler):
-        # Pass through the model
-        out = model(data)
-        graph_level_feat = model.graph_level_feat.unsqueeze(1)
-        # Normalizing the features
-        graph_level_contrast_feat = F.normalize(graph_level_feat, dim=-1)
-        # Pass through the contrastive learning pipeline
-        contras_loss = self.contras_loss(graph_level_contrast_feat, label)
-        # Let us detach the representation and compute FC output
-        # squeezing back so that the downstream tasks work as expected
-        graph_level_feat = graph_level_feat.squeeze().detach()
-        optimizer.zero_grad()
-        # passing through the expected pipeline
-        graph_label = model.lin2(graph_level_feat)
-        new_lesion_vol = model.lin_new_lesion_regr(graph_level_feat).squeeze()
-        graph_cls_loss = self.balanced_criterion(graph_label, label.view(-1))
-        new_lesion_vol_regr_loss = criterion_vol_regr(new_lesion_vol, data.graph_vol)
-        node_regr_loss = criterion_vol_regr(out['node_vol'], data.node_labels)
-        loss = graph_cls_loss + node_regr_loss + new_lesion_vol_regr_loss + contras_loss
-        loss_sans_contras = graph_cls_loss + node_regr_loss + new_lesion_vol_regr_loss
-        loss.backward()
-        total_loss += loss.item()
-        optimizer.step()
-        if scheduler is not None:
-            scheduler.step()
-        # Let us also plot per iteration loss to get some fine-grained information
-        train_writer.add_scalar('vol_regr_loss', node_regr_loss.item(), global_step=epoch * len(loader) + idx)
-        train_writer.add_scalar('contras_loss', contras_loss.item(), global_step=epoch * len(loader) + idx)
-        train_writer.add_scalar('graph_cls_loss', graph_cls_loss.item(), global_step=epoch * len(loader) + idx)
-        train_writer.add_scalar('graph_regr_loss', new_lesion_vol_regr_loss.item(),
-                                global_step=epoch * len(loader) + idx)
-        return loss_sans_contras.item()
-
-
 def graph_size_based_sampler(train_dataset):
     per_sample_wt = [0] * len(train_dataset)
     for idx, (graph, label) in enumerate(train_dataset):
@@ -244,71 +127,17 @@ def get_class_weights(train_dataset):
     return class_balance_weights
 
 
-def get_training_enhancements(criterion, criterion_vol_regr, model, optimizer, train_writer, class_balance_weights,
-                              train_dataset, batch_size, lr, weight_decay, train_loader):
-    # Assigning each value to None.
-    # Python specific way of assinging. `None` is immutable so we are fine. If it were a list/collection, all
-    # inputs would map to the same object and it might cause issues.
-    mixup_trainer = contras_trainer = mixup_train_loader = feature_alignment_loss = optimizer_centre_loss = None
-    use_mixup = get_configurations_dtype_boolean(section='TRAINING', key='USE_MIXUP')
-    print(f"using Mixup {use_mixup}.")
-    if use_mixup:
-        mixup_trainer = MixupTrainer(gnn_model=model, criterion=criterion, train_writer=train_writer,
-                                     optimizer=optimizer, regr_criterion=criterion_vol_regr)
-        # weighted_sampler = create_weighted_sampler(class_weights=class_balance_weights, dataset=train_dataset)
-        mixup_train_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True,
-                                        worker_init_fn=seed_worker, generator=g)
-        # We need to make drop_last=True for mixup training to work.
-        # This would ensure that both dataloaders always have the same shape
-        train_loader = DataLoader(train_dataset, batch_size, drop_last=True, sampler=train_loader.sampler,
-                                  worker_init_fn=seed_worker, generator=g)
-
-    use_contras_training = get_configurations_dtype_boolean(section='TRAINING', key='USE_CONTRAS_TRAINING')
-    print(f"using Contrastive training {use_contras_training}.")
-    if use_contras_training:
-        if use_mixup:
-            raise AttributeError("Contrastive training not supported with mixup. Aborting!")
-        contras_trainer = ContrastiveTrainer()
-
-    use_centre_loss = get_configurations_dtype_boolean(section='TRAINING', key='USE_CENTRE_LOSS')
-    print(f"using Centre loss: {use_centre_loss}.")
-    if use_centre_loss:
-        feature_alignment_loss = CenterLoss(feat_dim=model.lin1.in_features, num_classes=4,
-                                            # Since we have 4 brain clusters
-                                            ).to(device)
-        optimizer_centre_loss = Adam(feature_alignment_loss.parameters(), lr=lr, weight_decay=weight_decay)
-    return contras_trainer, mixup_trainer, mixup_train_loader, feature_alignment_loss, optimizer_centre_loss, train_loader
-
-
 def get_dataset_and_auxiliary_loss(dataset, test_idx, train_idx, val_idx, no_aug):
     is_node_level_dataset = get_configurations_dtype_boolean(section='SETUP', key='PERFORM_NODE_LEVEL_PREDICTION')
     print(f"Is node level dataset: {is_node_level_dataset}")
-    training_set_reduction_factor = get_configurations_dtype_float(section='TRAINING',
-                                                                   key='TRAINING_SIZE_REDUCTION_FACTOR',
-                                                                   default_value=1)
-    if not training_set_reduction_factor == 1:
-        print("Using reduced training size.")
-        print(f"original size was {len(train_idx)}")
-        train_idx = np.random.choice(train_idx, size=int(len(train_idx) * training_set_reduction_factor))
-        print(f"new size is {len(train_idx)}")
 
-    if is_node_level_dataset:
-        # Index 0 represents non-augmented graph while 1 represents augmented graph
-        if no_aug:
-            train_dataset = [(dataset[idx.item()][0], dataset[idx.item()][2]) for idx in train_idx]
-        else:
-            train_dataset = [(dataset[idx.item()][1], dataset[idx.item()][2]) for idx in train_idx]
-        test_dataset = [(dataset[idx.item()][0], dataset[idx.item()][2]) for idx in test_idx]
-        val_dataset = [(dataset[idx.item()][0], dataset[idx.item()][2]) for idx in val_idx]
-        criterion_vol_regr = nn.L1Loss()
-        # criterion_vol_regr = lambda a, b: (a - b).abs().sum()
+    if no_aug:
+        train_dataset = [(dataset[idx.item()][0], dataset[idx.item()][2]) for idx in train_idx]
     else:
-        # Should we apply it to linear models?
-        train_dataset = [dataset[idx.item()] for idx in train_idx]
-        test_dataset = [dataset[idx.item()] for idx in test_idx]
-        val_dataset = [dataset[idx.item()] for idx in val_idx]
-        criterion_vol_regr = None
-    return criterion_vol_regr, test_dataset, train_dataset, val_dataset
+        train_dataset = [(dataset[idx.item()][1], dataset[idx.item()][2]) for idx in train_idx]
+    test_dataset = [(dataset[idx.item()][0], dataset[idx.item()][2]) for idx in test_idx]
+    val_dataset = [(dataset[idx.item()][0], dataset[idx.item()][2]) for idx in val_idx]
+    return test_dataset, train_dataset, val_dataset
 
 
 def create_weighted_sampler(class_weights, dataset):
@@ -385,25 +214,18 @@ def k_fold(dataset, folds):
 
 def train_val_loop(criterion, enc, epochs, model, optimizer, roc_auc,
                    train_loader, train_writer, val_loader, val_losses,
-                   val_writer, log_dir, fold, criterion_vol_regr=None, dataset_refresh_metadata=None,
-                   mixup_trainer=None, mixup_train_loader=None, contras_trainer=None,
-                   feature_alignment_loss_and_optim=None, scheduler=None, tune_obj=None):
+                   val_writer, log_dir, fold,
+                   scheduler=None):
     best_val_roc = 0
     min_loss = 1e10
     best_model_save_epoch = -1
     for epoch in tqdm(range(1, epochs + 1)):
         train_loss = train(model=model, optimizer=optimizer, loader=train_loader, criterion=criterion, epoch=epoch,
-                           train_writer=train_writer, criterion_vol_regr=criterion_vol_regr,
-                           mixup_trainer=mixup_trainer, mixup_train_loader=mixup_train_loader,
-                           contras_trainer=contras_trainer,
-                           feature_alignment_loss_and_optim=feature_alignment_loss_and_optim)
+                           train_writer=train_writer)
         val_loss = eval_loss(model=model, loader=val_loader, criterion=criterion, epoch=epoch, writer=val_writer,
-                             criterion_vol_regr=criterion_vol_regr,
                              plotting_offset=len(val_loader.dataset))
-        val_roc = eval_roc_auc(model=model, loader=val_loader, enc=enc, epoch=epoch, writer=val_writer,
-                               criterion_vol_regr=criterion_vol_regr)
-        train_roc = eval_roc_auc(model=model, loader=train_loader, enc=enc, epoch=epoch, writer=train_writer,
-                                 criterion_vol_regr=criterion_vol_regr)
+        val_roc = eval_roc_auc(model=model, loader=val_loader, enc=enc, epoch=epoch, writer=val_writer)
+        train_roc = eval_roc_auc(model=model, loader=train_loader, enc=enc, epoch=epoch, writer=train_writer)
         eval_info = {
             'epoch': epoch,
             'train_loss': train_loss,
@@ -415,12 +237,12 @@ def train_val_loop(criterion, enc, epochs, model, optimizer, roc_auc,
         val_losses.append(val_loss)
         roc_auc.append(val_roc)
 
-        if val_roc > best_val_roc:
-            best_model_save_epoch = epoch
-            best_val_roc = val_roc
-            torch.save(model.state_dict(), os.path.join(log_dir, f"{model}_{fold}.pth"))
+        # if val_roc > best_val_roc:
+        #     best_val_roc = val_roc
+        #     torch.save(model.state_dict(), os.path.join(log_dir, f"{model}_{fold}.pth"))
 
         if val_loss < min_loss:
+            best_model_save_epoch = epoch
             min_loss = val_loss
             torch.save(model.state_dict(), os.path.join(log_dir, f"{model}_loss_{fold}.pth"))
 
@@ -429,25 +251,7 @@ def train_val_loop(criterion, enc, epochs, model, optimizer, roc_auc,
         # Our training dataset is a list with data objects.
         # So, in order to get more augmentations, we have to "reload" the list.
         # This ensures the __get_item__ is called repeatedly and thus, we get more augmentations.
-        if dataset_refresh_metadata is not None:
-            shuffle_dataset(loader=train_loader, dataset_refresh_metadata=dataset_refresh_metadata,
-                            mixup_train_loader=mixup_train_loader)
     print(f"Best model saved at {best_model_save_epoch}")
-    if tune_obj is not None:
-        tune_obj.report(roc_auc=val_roc)
-
-
-def entropy_loss(weights):
-    entropy_loss = torch.tensor([0], device=device)
-    if weights is not None:
-        EPS = 1e-15
-        ent = -weights * torch.log(weights + EPS) - (1 - weights) * torch.log(1 - weights + EPS)
-        entropy_loss = ent.mean()
-    return entropy_loss
-
-
-def sparsity_loss(weights):
-    return 0.1 * weights.sum() if weights is not None else torch.tensor([0.]).to(device)
 
 
 def execute_graph_classification_epoch(criterion, data, label, model, optimizer, total_loss, scheduler):
@@ -461,123 +265,15 @@ def execute_graph_classification_epoch(criterion, data, label, model, optimizer,
     return total_loss
 
 
-def execute_node_and_graph_classification_epoch(criterion, criterion_vol_regr, data, epoch,
-                                                idx, label, dataset, model, optimizer,
-                                                total_loss, train_writer, scheduler=None):
-    out = model(data)
-    graph_cls_loss = criterion(out['graph_pred'], label.view(-1))
-    new_lesion_vol_regr_loss = criterion_vol_regr(out['graph_vol'], data.graph_vol)
-    node_regr_loss = criterion_vol_regr(out['node_vol'], data.node_labels)
-    # Including node alignment loss
-    weights = out.get('weight_coeff', None)
-    # entropy_loss_conn = entropy_loss(weights=weights)
-    sparsity_loss_conn = sparsity_loss(weights=weights)
-    # Include the same for features
-    loss = graph_cls_loss + node_regr_loss + new_lesion_vol_regr_loss + sparsity_loss_conn
-    loss.backward()
-    total_loss += loss.item()
-    optimizer.step()
-    if scheduler is not None:
-        scheduler.step()
-    # Let us also plot per iteration loss to get some fine-grained information
-    train_writer.add_scalar('vol_regr_loss', node_regr_loss.item(), global_step=epoch * len(dataset) + idx)
-    train_writer.add_scalar('graph_cls_loss', graph_cls_loss.item(), global_step=epoch * len(dataset) + idx)
-    train_writer.add_scalar('graph_regr_loss', new_lesion_vol_regr_loss.item(),
-                            global_step=epoch * len(dataset) + idx)
-    train_writer.add_scalar('sparsity_loss_conn', sparsity_loss_conn.item(),
-                            global_step=epoch * len(dataset) + idx)
-    return total_loss
-
-
-def execute_node_and_graph_classification_with_centre_loss_epoch(criterion, criterion_vol_regr, data, epoch,
-                                                                 feature_alignment_loss, centre_loss_optim, idx, label,
-                                                                 loader, model, optimizer,
-                                                                 total_loss, train_writer, scheduler):
-    out = model(data)
-    graph_cls_loss = criterion(out['graph_pred'], label.view(-1))
-    new_lesion_vol_regr_loss = criterion_vol_regr(out['graph_vol'], data.graph_vol)
-    node_regr_loss = criterion_vol_regr(out['node_vol'], data.node_labels)
-    centre_loss_optim.zero_grad()
-    contras_centre_loss = feature_alignment_loss(model.x, data.cluster.squeeze() - 1,
-                                                 batch_size=out['graph_pred'].shape[0])  # label)
-    loss = graph_cls_loss + node_regr_loss + new_lesion_vol_regr_loss + contras_centre_loss
-    loss.backward()
-    total_loss += loss.item()
-    optimizer.step()
-    centre_loss_optim.step()
-    if scheduler is not None:
-        scheduler.step()
-    # Let us also plot per iteration loss to get some fine-grained information
-    train_writer.add_scalar('vol_regr_loss', node_regr_loss.item(), global_step=epoch * len(loader) + idx)
-    train_writer.add_scalar('graph_cls_loss', graph_cls_loss.item(), global_step=epoch * len(loader) + idx)
-    train_writer.add_scalar('centre_loss', contras_centre_loss.item(), global_step=epoch * len(loader) + idx)
-    train_writer.add_scalar('graph_regr_loss', new_lesion_vol_regr_loss.item(),
-                            global_step=epoch * len(loader) + idx)
-    return total_loss
-
-
-def execute_contrastive_training_epoch(contras_trainer, criterion_vol_regr, epoch, idx, mixup_train_loader, model,
-                                       optimizer, total_loss, train_writer, scheduler):
-    balanced_graph, balanced_labels = next(iter(mixup_train_loader))
-    balanced_graph, balanced_labels = balanced_graph.to(device), balanced_labels.to(device)
-    total_loss = contras_trainer.execute_contras_training(criterion_vol_regr=criterion_vol_regr,
-                                                          data=balanced_graph, epoch=epoch, idx=idx,
-                                                          label=balanced_labels, loader=mixup_train_loader,
-                                                          model=model,
-                                                          optimizer=optimizer, total_loss=total_loss,
-                                                          train_writer=train_writer,
-                                                          scheduler=scheduler)
-    return total_loss
-
-
-def execute_mixup_epoch(criterion_vol_regr, data, epoch, feature_alignment_loss_and_optim, idx, label, loader,
-                        mixup_train_loader, mixup_trainer, scheduler):
-    balanced_graph, balanced_labels = next(iter(mixup_train_loader))
-    balanced_graph, balanced_labels = balanced_graph.to(device), balanced_labels.to(device)
-    mixup_trainer.run_mixup_training(graph=data, idx=epoch * len(loader) + idx, label=label,
-                                     graph2=balanced_graph, label2=balanced_labels,
-                                     criterion_vol_regr=criterion_vol_regr,
-                                     scheduler=scheduler)
-
-
-def train(model, optimizer, loader, criterion, epoch, train_writer, criterion_vol_regr=None, mixup_trainer=None,
-          mixup_train_loader=None, contras_trainer=None, feature_alignment_loss_and_optim=None, scheduler=None):
+def train(model, optimizer, loader, criterion, epoch, train_writer, scheduler=None):
     model.train()
-    is_node_and_graph_cls = criterion_vol_regr is not None
-    feature_alignment_loss, centre_loss_optim = feature_alignment_loss_and_optim
     # Some information needed for logging on tensorboard
     total_loss = 0
     for idx, (data, label) in enumerate(loader):
         optimizer.zero_grad()
         data, label = data.to(device), label.to(device)
-        # Apply mixup
-        if mixup_trainer is not None:
-            execute_mixup_epoch(criterion_vol_regr=criterion_vol_regr, data=data, epoch=epoch,
-                                feature_alignment_loss_and_optim=feature_alignment_loss_and_optim, idx=idx, label=label,
-                                loader=loader,
-                                mixup_train_loader=mixup_train_loader, mixup_trainer=mixup_trainer, scheduler=scheduler)
-        elif contras_trainer is not None:
-            total_loss = execute_contrastive_training_epoch(contras_trainer, criterion_vol_regr, epoch, idx,
-                                                            mixup_train_loader, model, optimizer, total_loss,
-                                                            train_writer, scheduler=scheduler)
-        # This is the centre loss section
-        elif feature_alignment_loss is not None:
-            total_loss = execute_node_and_graph_classification_with_centre_loss_epoch(criterion, criterion_vol_regr,
-                                                                                      data, epoch,
-                                                                                      feature_alignment_loss,
-                                                                                      centre_loss_optim, idx, label,
-                                                                                      loader, model, optimizer,
-                                                                                      total_loss, train_writer,
-                                                                                      scheduler=scheduler)
-        elif is_node_and_graph_cls:
-            total_loss = execute_node_and_graph_classification_epoch(criterion, criterion_vol_regr, data, epoch,
-                                                                     idx, label,
-                                                                     loader, model, optimizer, total_loss,
-                                                                     train_writer,
-                                                                     scheduler=scheduler)
-        else:
-            total_loss = execute_graph_classification_epoch(criterion, data, label, model, optimizer, total_loss,
-                                                            scheduler=scheduler)
+        total_loss = execute_graph_classification_epoch(criterion, data, label, model, optimizer, total_loss,
+                                                        scheduler=scheduler)
 
     avg_train_loss = total_loss / len(loader)
     train_writer.add_scalar('loss', avg_train_loss, global_step=epoch)
@@ -606,24 +302,18 @@ def eval_acc(model, loader, criterion_vol_regr, writer=None):
     correct = 0
     out_feat = torch.FloatTensor().to(device)
     outGT = torch.FloatTensor().to(device)
-    is_node_and_graph_cls = criterion_vol_regr is not None
     for data, labels in loader:
         data, labels = data.to(device), labels.to(device)
         with torch.no_grad():
             out = model(data)
-            if is_node_and_graph_cls:
-                pred = out['graph_pred'].max(1)[1]
-                out_feat = torch.cat((out_feat, model.graph_level_feat), 0)
-                outGT = torch.cat((outGT, labels), 0)
-            else:
-                pred = out['graph_pred'].max(1)[1]
+            pred = out['graph_pred'].max(1)[1]
         correct += pred.eq(labels.view(-1)).sum().item()
     if writer is not None:
         return correct / len(loader.dataset), out_feat, outGT
     return correct / len(loader.dataset)
 
 
-def eval_acc_with_confusion_matrix(model, dataset, criterion_vol_regr=None):
+def eval_acc_with_confusion_matrix(model, dataset):
     model.eval()
     outGT = torch.FloatTensor().to(device)
     outPRED = torch.FloatTensor().to(device)
@@ -646,11 +336,10 @@ def eval_acc_with_confusion_matrix(model, dataset, criterion_vol_regr=None):
 
 
 @torch.no_grad()
-def eval_roc_auc(model, loader, enc, epoch=0, writer=None, criterion_vol_regr=None):
+def eval_roc_auc(model, loader, enc, epoch=0, writer=None):
     model.eval()
     outGT = torch.FloatTensor().to(device)
     outPRED = torch.FloatTensor().to(device)
-    is_node_and_graph_cls = criterion_vol_regr is not None
     for data, labels in loader:
         data, labels = data.to(device), labels.to(device)
         with torch.cuda.amp.autocast():
@@ -669,36 +358,66 @@ def eval_roc_auc(model, loader, enc, epoch=0, writer=None, criterion_vol_regr=No
     return roc_auc_value
 
 
-def eval_loss(model, loader, criterion, epoch, writer, criterion_vol_regr=None, plotting_offset=-1):
+@torch.no_grad()
+def eval_roc_auc_with_prec_recall_acc_and_f1(model, loader, enc, epoch=0, writer=None):
     model.eval()
-    is_node_and_graph_cls = criterion_vol_regr is not None
+    outGT = torch.FloatTensor().to(device)
+    outPRED = torch.FloatTensor().to(device)
+    for data, labels in loader:
+        data, labels = data.to(device), labels.to(device)
+        with torch.cuda.amp.autocast():
+            out = model(data)  # Ignoring the node & regr component for the time being
+        outPRED = torch.cat((outPRED, out['graph_pred']), 0)
+        outGT = torch.cat((outGT, labels), 0)
+    predictions = torch.softmax(outPRED, dim=1)
+    predictions, target = predictions.cpu().numpy(), outGT.cpu().numpy()
+    # Encoder is callable.
+    # Hence, we execute callable which returns the self.encoder instance
+    target_one_hot = enc().transform(target.reshape(-1, 1)).toarray()  # Reshaping needed by the library
+    # Arguments take 'GT' before taking 'predictions'
+    roc_auc_value = roc_auc_score(target_one_hot, predictions, average='weighted')
+    if writer is not None:
+        writer.add_scalar('roc', roc_auc_value, global_step=epoch)
+    # Computing the extra metric
+    prec, recall, acc, f1 = compute_precision_recall_acc_and_f1(y_true=target, y_pred=predictions)
+    return roc_auc_value, prec, recall, acc, f1
+
+
+def compute_precision_recall_acc_and_f1(y_true, y_pred, threshold=0.675):
+    """
+    :param y_true: GT label associated with the given example
+    :param y_pred: The prediction logits made by the model
+    :return: specificity, sensitivity, accuracy, f1
+    """
+    # y_pred = np.argmax(y_pred, axis=1)
+    y_pred = y_pred[:, 1] >= threshold
+    cm = confusion_matrix(y_true, y_pred)
+
+    # Extract true negatives, false positives, false negatives, and true positives from the confusion matrix
+    tn, fp, fn, tp = cm.ravel()
+
+    precision = precision_score(y_true, y_pred)
+    recall = recall_score(y_true, y_pred)
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+
+    # Compute F1 score
+    f1 = f1_score(y_true, y_pred)
+    return precision, recall, accuracy, f1
+
+
+def eval_loss(model, loader, criterion, epoch, writer, plotting_offset=-1):
+    model.eval()
     # Some information needed for logging on tensorboard
     total_loss = 0
     nodes_on = []
-    plotting_offset = len(loader) if plotting_offset == -1 else plotting_offset
     for idx, (data, labels) in enumerate(loader):
         data, labels = data.to(device), labels.to(device)
         with torch.no_grad():
-            if is_node_and_graph_cls:
-                out = model(data)  # Ignoring the regression part for the time being
-                node_regr_loss = criterion_vol_regr(out['node_vol'], data.node_labels)
-                graph_cls_loss = criterion(out['graph_pred'], labels.view(-1))
-                new_lesion_vol_regr_loss = criterion_vol_regr(out['graph_vol'], data.graph_vol)
-                writer.add_scalar('vol_regr_loss', node_regr_loss.item(), global_step=epoch * plotting_offset + idx)
-                writer.add_scalar('graph_cls_loss', graph_cls_loss.item(), global_step=epoch * plotting_offset + idx)
-                writer.add_scalar('graph_regr_loss', new_lesion_vol_regr_loss.item(),
-                                  global_step=epoch * plotting_offset + idx)
-                # loss = graph_cls_loss + node_regr_loss + new_lesion_vol_regr_loss
-                loss = graph_cls_loss
-                total_loss += loss
-                nodes_on.append(out.get('on_ratio', torch.tensor(1)).item())
-            else:
-                out = model(data)
-                loss = criterion(out['graph_pred'], labels.view(-1)).item()
-                total_loss += loss
+            out = model(data)
+            loss = criterion(out['graph_pred'], labels.view(-1)).item()
+            total_loss += loss
     avg_val_loss = total_loss / len(loader)
     writer.add_scalar('loss', avg_val_loss, global_step=epoch)
-    writer.add_scalar('on_ratio', sum(nodes_on) / len(nodes_on), global_step=epoch)
     return avg_val_loss
 
 
@@ -709,7 +428,7 @@ def decide_graph_category_based_on_size(graph_size):
         return graph_size_large
 
 
-def eval_graph_len_acc(model, dataset, criterion_vol_regr=None):
+def eval_graph_len_acc(model, dataset):
     model.eval()
     # A dictionary of the format
     # {
@@ -723,7 +442,6 @@ def eval_graph_len_acc(model, dataset, criterion_vol_regr=None):
     #           ...
     # }
     size_cm_dict = defaultdict(list)
-    is_node_and_graph_cls = criterion_vol_regr is not None
     correct = 0
     for idx in range(len(dataset)):
         graph, graph_label = dataset[idx]
@@ -820,19 +538,10 @@ def compute_acc(gt, predictions):
     return acc
 
 
-def eval_regr_loss(model, loader, criterion_vol_regr):
+def eval_regr_loss(model, loader):
     # The computation  is defined only when we are working with regression target
-    if criterion_vol_regr is None:
-        return -1
-    # Let us now compute the regression-loss
-    new_lesion_vol_regr_loss = 0
-    for data, labels in loader:
-        data, labels = data.to(device), labels.to(device)
-        with torch.no_grad():
-            out = model(data)
-            new_lesion_vol_regr_loss += criterion_vol_regr(out['graph_vol'], data.graph_vol)
-    avg_new_lesion_vol_regr_loss = new_lesion_vol_regr_loss / len(loader)
-    return avg_new_lesion_vol_regr_loss
+    # Since mean operation is not supported on long tensors.
+    return -1.0
 
 
 def compute_label_wise_acc(gt, predictions):
@@ -842,6 +551,12 @@ def compute_label_wise_acc(gt, predictions):
     zero_acc = predicted_label[zero_indices].eq(gt[zero_indices].view(-1)).sum().item() / zero_indices.shape[0]
     ones_acc = predicted_label[ones_indices].eq(gt[ones_indices].view(-1)).sum().item() / ones_indices.shape[0]
     return zero_acc, ones_acc
+
+
+def display_mean_std(metric_name, metric_value_tensor):
+    mean = metric_value_tensor.mean().item()
+    std = metric_value_tensor.unsqueeze(0).std().item()
+    print(f'Test {metric_name}: {mean:.3f} ± {std:.3f}')
 
 
 def pretty_print_avg_dictionary(input_dict):

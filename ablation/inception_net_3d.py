@@ -1,8 +1,6 @@
 import torch
 from torch import nn
 
-from environment_setup import device
-
 
 class InceptionBlock(nn.Module):
     def __init__(self, in_channel, out_channels):
@@ -61,9 +59,10 @@ class InceptionModel(nn.Module):
         final_out_ch = 3 * (block3_out_ch + block2_out_ch + block1_out_ch) + in_channel
         self.linear = nn.Sequential(
             nn.Linear((volume_dim_final ** 3) * final_out_ch, block3_out_ch),
-            nn.ReLU(),
-            nn.Linear(block3_out_ch, num_classes)
+            nn.ReLU()
         )
+        self.fc1 = nn.Linear(block3_out_ch, num_classes)
+        self.regr = nn.Linear(block3_out_ch, 1)
 
     def forward(self, x):
         x = self.block1(x)
@@ -71,7 +70,10 @@ class InceptionModel(nn.Module):
         x = self.block3(x)
         x = x.view(x.shape[0], -1)
         x = self.linear(x)
-        return x
+        clf = self.fc1(x)
+        regr_out = self.regr(x)
+        regr_out = torch.log(1 + torch.exp(regr_out - regr_out.max())) + regr_out.max()
+        return clf, regr_out
 
 
 def weight_reset(m):
@@ -82,5 +84,5 @@ def weight_reset(m):
 if __name__ == '__main__':
     model = InceptionModel(in_channel=2, block1_out_ch=16, block2_out_ch=32, block3_out_ch=64, vol_size=144)
     x = torch.randn(2, 2, 144, 144, 144)
-    print(model(x).shape)
+    print(model(x)[0].shape)
     model.apply(weight_reset)
