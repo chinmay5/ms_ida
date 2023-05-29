@@ -1,0 +1,12 @@
+matplotlib==3.3.4
+networkx==2.5.1
+nibabel==3.2.2
+numpy==1.19.5
+pandas==1.1.5
+plotly==5.8.0
+scikit_learn==1.2.2
+torch==1.10.2+cu113
+torch_geometric==2.0.3
+torch_scatter==2.0.9
+torchio==0.18.73
+tqdm==4.62.3
